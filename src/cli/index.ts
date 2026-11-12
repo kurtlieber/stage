@@ -12,7 +12,8 @@ import { COLLECTIONS, jsonSchema, type Collection } from '../core/schema.ts'
 import { readScene, writeScene } from '../core/store.ts'
 import { ROOT, checkScene, control, newScene, openViewer, removeEntity, upsert } from './ops.ts'
 import { Renderer } from './render.ts'
-import { DEFAULT_PORT, VERSION, startServer } from './server.ts'
+import { FileSceneStore } from '../core/scene-store.ts'
+import { DEFAULT_PORT, VERSION, allowedHostsFromEnv, parseListen, startServer } from './server.ts'
 
 // The `stage` command. Every command but `open`, `serve`, and `mcp` needs
 // no display, takes --json, exits 0 or 1, and prints errors on stderr.
@@ -22,6 +23,8 @@ const USAGE = `Usage: stage <command> [options]
 Viewer:
   open <scene>                         Open the scene in your browser; it updates as the file changes
   serve [--port ${DEFAULT_PORT}]                   Run the viewer server in the foreground
+  serve --root dir [--listen host:port]
+                                       Serve the scenes in dir by name (project/variant), and no other file
 
 Commands that need no display:
   new <path> [--name N] [--from flat]  Start a scene: empty, room, or an example (flat, flat-with-bedroom, two-storey, desk)
@@ -45,9 +48,18 @@ Commands that need no display:
   fmt <scene>                          Rewrite the scene in canonical form
   schema                               Print the scene format as JSON Schema
   mcp                                  Run as an MCP server over stdio
+  mcp --http host:port --root dir      Run as an MCP server over HTTP at /mcp, for scenes in dir by name
   skill [install]                      Print the agent skill, or install it
 
 Add --json to any command for machine-readable output.`
+
+function listenOn(flag: string, value: string): { host: string; port: number } {
+  try {
+    return parseListen(value)
+  } catch (error) {
+    throw new Error(`${flag}: ${(error as Error).message}`)
+  }
+}
 
 function print(value: unknown) {
   process.stdout.write(typeof value === 'string' ? `${value}\n` : `${JSON.stringify(value, null, 2)}\n`)
@@ -85,6 +97,9 @@ async function main(argv: string[]): Promise<number> {
       from: { type: 'string' },
       category: { type: 'string' },
       port: { type: 'string' },
+      listen: { type: 'string' },
+      root: { type: 'string' },
+      http: { type: 'string' },
       resolution: { type: 'string' },
       all: { type: 'boolean' },
       'all-cameras': { type: 'boolean' },
@@ -195,9 +210,10 @@ async function main(argv: string[]): Promise<number> {
     }
 
     case 'serve': {
-      const port = Number(values.port ?? DEFAULT_PORT)
-      const server = await startServer(port)
-      print(`Serving the viewer at ${server.url}`)
+      const listen = typeof values.listen === 'string' ? listenOn('--listen', values.listen) : { host: '127.0.0.1', port: Number(values.port ?? DEFAULT_PORT) }
+      const root = typeof values.root === 'string' ? resolve(values.root) : undefined
+      const server = await startServer(listen.port, { host: listen.host, store: root ? new FileSceneStore(root) : undefined, allowedHosts: root ? allowedHostsFromEnv() : [] })
+      print(root ? `Serving the scenes in ${root} at ${server.url}` : `Serving the viewer at ${server.url}`)
       await new Promise(() => {})
       return 0
     }
@@ -293,6 +309,21 @@ async function main(argv: string[]): Promise<number> {
       return 0
 
     case 'mcp': {
+      if (values.http !== undefined) {
+        if (typeof values.http !== 'string') throw new Error('--http takes host:port, like 127.0.0.1:4748')
+        if (typeof values.root !== 'string') throw new Error('--http needs --root, the folder that holds the scenes')
+        const { host, port } = listenOn('--http', values.http)
+        const { runMcpHttp } = await import('./mcp.ts')
+        await runMcpHttp({
+          root: values.root,
+          host,
+          port,
+          publicUrl: process.env.STAGE_PUBLIC_URL,
+          viewerUrl: process.env.STAGE_VIEWER_URL,
+          allowedHosts: allowedHostsFromEnv(),
+        })
+        return 0
+      }
       const { runMcp } = await import('./mcp.ts')
       await runMcp()
       return 0

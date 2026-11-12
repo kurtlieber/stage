@@ -3,12 +3,15 @@ import { readFile } from 'node:fs/promises'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { basename, dirname, extname, isAbsolute, join, normalize, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import type { SceneStore } from '../core/scene-store.ts'
 import { CACHE, availableLock } from './assets.ts'
 
 // Serves the built viewer, the scene files it asks for, and a stream of
 // changes, so the browser updates the moment an agent writes the file.
-// Bound to 127.0.0.1 only, and it checks the Host header, so no web page
-// elsewhere can read a scene through it.
+// Bound to 127.0.0.1 by default, and it checks the Host header, so no web
+// page elsewhere can read a scene through it. Given a store of named scenes,
+// it serves those scenes only, and may answer to the host names a proxy in
+// front of it sends.
 
 export const VERSION = '0.1.0'
 export const DEFAULT_PORT = Number(process.env.STAGE_PORT ?? 4747)
@@ -36,6 +39,40 @@ const TYPES: Record<string, string> = {
 export const sceneToken = (scenePath: string) => Buffer.from(scenePath).toString('base64url')
 const fromToken = (token: string) => Buffer.from(token, 'base64url').toString()
 
+const LOCAL_HOST = /^(127\.0\.0\.1|localhost)(:\d+)?$/
+
+// Whether a request's Host header is one this server answers to: localhost,
+// or one of `extra` (host names, any port).
+export function hostAllowed(host: string, extra: readonly string[] = []): boolean {
+  if (LOCAL_HOST.test(host)) return true
+  const name = host.toLowerCase().replace(/:\d+$/, '')
+  return name !== '' && extra.includes(name)
+}
+
+// STAGE_ALLOWED_HOSTS: host names, comma-separated, that a server of named
+// scenes answers to besides localhost; the deployment's, so they stay out of
+// the code.
+export function allowedHostsFromEnv(): string[] {
+  return (process.env.STAGE_ALLOWED_HOSTS ?? '').split(',').map((h) => h.trim().toLowerCase()).filter(Boolean)
+}
+
+// "0.0.0.0:4747", ":4747", or "4747" (on 127.0.0.1).
+export function parseListen(value: string): { host: string; port: number } {
+  const match = /^(?:(.*):)?(\d+)$/.exec(value.trim())
+  const port = Number(match?.[2])
+  if (!match || !Number.isInteger(port) || port > 65535) throw new Error(`expected host:port, like 127.0.0.1:4747; got "${value}"`)
+  return { host: match[1] || '127.0.0.1', port }
+}
+
+export interface ServeOptions {
+  /** The address to bind; 127.0.0.1 by default. */
+  host?: string
+  /** Serve the scenes of this store by name, and no file outside it. */
+  store?: SceneStore
+  /** With a store: host names to answer to besides localhost. */
+  allowedHosts?: readonly string[]
+}
+
 interface Channel {
   clients: Set<ServerResponse>
   watcher?: FSWatcher
@@ -57,9 +94,21 @@ function buildStamp(): string {
   }
 }
 
-export async function startServer(port = DEFAULT_PORT): Promise<StageServer> {
+export async function startServer(port = DEFAULT_PORT, options: ServeOptions = {}): Promise<StageServer> {
   if (!existsSync(join(DIST, 'index.html'))) {
     throw new Error(`the viewer is not built; run: npm run build (in ${resolve(DIST, '..')})`)
+  }
+  const { store } = options
+  const extraHosts = store ? (options.allowedHosts ?? []) : []
+  // The scene file a request names: an absolute path, or with a store, a
+  // scene name. Undefined for anything else.
+  const locate = (value: string | null): string | undefined => {
+    if (!store) return scenePath(value)
+    try {
+      return value ? store.locate(value) : undefined
+    } catch {
+      return undefined
+    }
   }
   const channels = new Map<string, Channel>()
   let stamp = buildStamp()
@@ -107,7 +156,7 @@ export async function startServer(port = DEFAULT_PORT): Promise<StageServer> {
 
   const handle = async (request: IncomingMessage, response: ServerResponse) => {
     const host = request.headers.host ?? ''
-    if (!/^(127\.0\.0\.1|localhost)(:\d+)?$/.test(host)) return send(response, 403, { error: 'stage only answers on localhost' })
+    if (!hostAllowed(host, extraHosts)) return send(response, 403, { error: 'stage only answers on localhost' })
     const url = new URL(request.url ?? '/', `http://${host}`)
 
     if (url.pathname === '/api/health') return send(response, 200, { stage: VERSION, pid: process.pid })
@@ -126,7 +175,9 @@ export async function startServer(port = DEFAULT_PORT): Promise<StageServer> {
     // URL whose siblings are the file's siblings.
     const sibling = /^\/files\/([A-Za-z0-9_-]+)\/(.+)$/.exec(url.pathname)
     if (sibling) {
-      const folder = dirname(fromToken(sibling[1]))
+      const scene = locate(fromToken(sibling[1]))
+      if (!scene) return send(response, 404, { error: 'no such scene' })
+      const folder = dirname(scene)
       const file = normalize(join(folder, decodeURIComponent(sibling[2])))
       if (!file.startsWith(folder + '/') || !existsSync(file) || statSync(file).isDirectory()) return send(response, 404, { error: 'no such file beside the scene' })
       response.writeHead(200, { 'content-type': TYPES[extname(file).toLowerCase()] ?? 'application/octet-stream', 'cache-control': 'no-store' })
@@ -135,15 +186,16 @@ export async function startServer(port = DEFAULT_PORT): Promise<StageServer> {
     }
 
     if (url.pathname.startsWith('/api/')) {
-      const path = scenePath(url.searchParams.get('path'))
-      if (!path) return send(response, 400, { error: 'path must be an absolute path to a .json scene file' })
+      const path = locate(url.searchParams.get('path'))
+      if (!path) return send(response, 400, { error: store ? 'path must be a scene name, project/variant' : 'path must be an absolute path to a .json scene file' })
 
       if (url.pathname === '/api/scene') {
         try {
           const text = await readFile(path, 'utf8')
           return send(response, 200, { scene: JSON.parse(text) })
         } catch (error) {
-          return send(response, 200, { error: `${path}: ${(error as Error).message}` })
+          const name = url.searchParams.get('path')!
+          return send(response, 200, { error: `${name}: ${(error as Error).message.replaceAll(path, name)}` })
         }
       }
 
@@ -188,14 +240,15 @@ export async function startServer(port = DEFAULT_PORT): Promise<StageServer> {
     createReadStream(file).pipe(response)
   }
 
+  const host = options.host ?? '127.0.0.1'
   await new Promise<void>((done, fail) => {
     server.once('error', fail)
-    server.listen(port, '127.0.0.1', () => done())
+    server.listen(port, host, () => done())
   })
   const address = server.address()
   const actual = typeof address === 'object' && address ? address.port : port
   return {
-    url: `http://127.0.0.1:${actual}`,
+    url: `http://${host === '0.0.0.0' || host === '::' ? '127.0.0.1' : host}:${actual}`,
     port: actual,
     close: async () => {
       distWatcher.close()

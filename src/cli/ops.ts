@@ -1,13 +1,13 @@
 import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, openSync } from 'node:fs'
-import { copyFile } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { z } from 'zod'
 import { check, type CheckResult } from '../core/check.ts'
 import { Camera, Item, Level, Light, Opening, Room, type Collection, CustomMaterial, SceneObject } from '../core/schema.ts'
-import { readScene, writeScene } from '../core/store.ts'
+import { PathSceneStore, type SceneStore } from '../core/scene-store.ts'
 import { DEFAULT_PORT, healthy, viewerUrl } from './server.ts'
 
 // What the command line and the MCP server both do to a scene, so the two
@@ -28,19 +28,24 @@ export const SCHEMAS: Record<Collection, z.ZodType> = {
   cameras: Camera,
 }
 
-export async function newScene(path: string, name: string, from = 'empty'): Promise<string> {
-  const target = resolve(path.endsWith('.json') ? path : join(path, 'scene.json'))
-  if (existsSync(target)) throw new Error(`${target} already exists; open it, or pick another path`)
-  mkdirSync(dirname(target), { recursive: true })
+// Scenes named by file path: the command line and the local MCP server.
+export const PATHS: SceneStore = new PathSceneStore()
+
+// Starts a scene and returns its name in the store (for paths, the file).
+export async function newScene(path: string, name: string, from = 'empty', store: SceneStore = PATHS): Promise<string> {
+  return store.create(path, await starterScene(name, from))
+}
+
+// What a new scene holds. Empty is the ground and the sun, nothing else: a
+// thing can be built with no building around it. "room" starts a building
+// instead, and an example is a copy of it, byte for byte.
+export async function starterScene(name: string, from = 'empty'): Promise<unknown> {
   if (from !== 'empty' && from !== 'room') {
     const example = join(EXAMPLES, from, 'scene.json')
     if (!existsSync(example)) throw new Error(`no example is called "${from}"; examples: flat, flat-with-bedroom, two-storey, desk, room, or empty`)
-    await copyFile(example, target)
-    return target
+    return readFile(example, 'utf8')
   }
-  // Empty is the ground and the sun, nothing else: a thing can be built
-  // with no building around it. "room" starts a building instead.
-  await writeScene(target, {
+  return {
     stage: '0.1',
     name,
     units: 'm',
@@ -51,45 +56,46 @@ export async function newScene(path: string, name: string, from = 'empty'): Prom
     objects: [],
     lights: [{ id: 'sun', type: 'sun', azimuth: 220, elevation: 35, intensity: 1 }],
     cameras: [{ id: 'plan', type: 'plan' }],
-  })
-  return target
+  }
 }
 
-export async function checkScene(path: string): Promise<CheckResult> {
-  return check(await readScene(path))
+export async function checkScene(path: string, store: SceneStore = PATHS): Promise<CheckResult> {
+  return check(await store.read(path))
 }
 
 // Adds an entity, or replaces the one with the same id. The entity is
 // validated alone first, and nothing is written if it is malformed;
 // problems with the scene as a whole are written and reported, so an agent
 // can build up a scene in any order.
-export async function upsert(path: string, collection: Collection, entity: unknown): Promise<{ replaced: boolean; result: CheckResult }> {
+export async function upsert(path: string, collection: Collection, entity: unknown, store: SceneStore = PATHS): Promise<{ replaced: boolean; result: CheckResult }> {
   const parsed = SCHEMAS[collection].safeParse(entity)
   if (!parsed.success) {
     throw new Error(`not a valid ${collection.slice(0, -1)}: ${parsed.error.issues.map((i) => `${i.path.join('.') || '(entity)'}: ${i.message}`).join('; ')}`)
   }
-  const raw = (await readScene(path)) as Record<string, unknown[]>
-  const list = (raw[collection] ??= [])
-  const id = (entity as { id: string }).id
-  const index = list.findIndex((e) => (e as { id?: string }).id === id)
-  if (index >= 0) list[index] = entity
-  else list.push(entity)
-  await writeScene(path, raw)
-  return { replaced: index >= 0, result: check(raw) }
+  const { replaced, raw } = await store.mutate(path, (raw) => {
+    const list = ((raw as Record<string, unknown[]>)[collection] ??= [])
+    const id = (entity as { id: string }).id
+    const index = list.findIndex((e) => (e as { id?: string }).id === id)
+    if (index >= 0) list[index] = entity
+    else list.push(entity)
+    return { replaced: index >= 0, raw }
+  })
+  return { replaced, result: check(raw) }
 }
 
-export async function removeEntity(path: string, id: string): Promise<{ collection: string; result: CheckResult }> {
-  const raw = (await readScene(path)) as Record<string, unknown[]>
-  for (const collection of ['items', 'openings', 'rooms', 'cameras', 'lights', 'levels']) {
-    const list = raw[collection]
-    if (!Array.isArray(list)) continue
-    const index = list.findIndex((e) => (e as { id?: string }).id === id)
-    if (index < 0) continue
-    list.splice(index, 1)
-    await writeScene(path, raw)
-    return { collection, result: check(raw) }
-  }
-  throw new Error(`nothing in ${path} has the id "${id}"`)
+export async function removeEntity(path: string, id: string, store: SceneStore = PATHS): Promise<{ collection: string; result: CheckResult }> {
+  const { collection, raw } = await store.mutate(path, (raw) => {
+    for (const collection of ['items', 'objects', 'openings', 'rooms', 'cameras', 'lights', 'materials', 'levels']) {
+      const list = raw[collection]
+      if (!Array.isArray(list)) continue
+      const index = list.findIndex((e) => (e as { id?: string }).id === id)
+      if (index < 0) continue
+      list.splice(index, 1)
+      return { collection, raw }
+    }
+    throw new Error(`nothing in ${path} has the id "${id}"`)
+  })
+  return { collection, result: check(raw) }
 }
 
 // The live viewer runs as its own small background process, so it outlives

@@ -63,6 +63,11 @@ config; [docs/mcp.md](docs/mcp.md) has each one, and the two optional keys
 for the model libraries. Opening this repository itself in Claude Code
 offers the server from its `.mcp.json`.
 
+To reach Stage from another machine, such as a chat app on the web or a
+phone, run it as a shared server: the MCP server over HTTP and the viewer
+beside it, with scenes by name instead of by path, in Docker if you like.
+[docs/server.md](docs/server.md) has the commands and the settings.
+
 Then start a fresh session and ask: "Build me a rubber duck on a desk and
 open it in my browser." Or: "Start a scene from the two-storey example,
 open it, and move the sofa under the window." The agent sees every render
@@ -200,7 +205,8 @@ example.
 ## Development
 
 ```sh
-npm test               # core: check, geometry, query, walking, formatting, assets
+npm test               # core: check, geometry, query, walking, formatting, assets;
+                       # the scene store, and the shared server over HTTP
 npm run test:render    # headless renders: determinism, and goldens for every example
 npm run typecheck
 ```
