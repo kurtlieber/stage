@@ -52,6 +52,22 @@ function load(file: string, color: boolean, size: [number, number]): THREE.Textu
   return texture
 }
 
+// A level's plan drawing. Tracked like every other texture, so a headless
+// plan render waits for it instead of capturing the floor without it.
+export function loadPlanImage(url: string, onLoad: (texture: THREE.Texture<HTMLImageElement>) => void): THREE.Texture<HTMLImageElement> {
+  let done: () => void = () => {}
+  track(new Promise<void>((resolve) => (done = resolve)))
+  return loader.load(
+    url,
+    (texture) => {
+      onLoad(texture)
+      done()
+    },
+    undefined,
+    () => done(),
+  )
+}
+
 export function textureSet(id: string | undefined, size?: number): TextureSet | undefined {
   if (!id) return undefined
   const entry = lock.textures[id]

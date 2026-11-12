@@ -7,7 +7,7 @@ import type { Scene } from '../core/schema.ts'
 import { RAIL_OFFSET, sliderLayout } from '../core/slider.ts'
 import { floorToFloor } from '../core/walk.ts'
 import { buildItem, textSprite } from './furniture.ts'
-import { fitModel, hasModel, loadModel, loadModelFrom, textureSet } from './library.ts'
+import { fitModel, hasModel, loadModel, loadModelFrom, loadPlanImage, textureSet } from './library.ts'
 import { boxInMeters, planks, speckle, tiles } from './textures.ts'
 
 // Plan coordinates [x, y] (y north) become three.js [x, -z] with y up, so
@@ -284,7 +284,7 @@ export function buildScene(scene: Scene, options: BuildOptions = {}): Built {
   for (const level of levels) {
     if (!level.plan || !options.fileUrl) continue
     const plan = level.plan
-    const texture = new THREE.TextureLoader().load(options.fileUrl(plan.image), (loaded) => {
+    const texture = loadPlanImage(options.fileUrl(plan.image), (loaded) => {
       const w = loaded.image.width / plan.scale
       const h = loaded.image.height / plan.scale
       mesh.geometry.dispose()

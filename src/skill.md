@@ -38,7 +38,8 @@ stands in rooms, levels stack. A scene with no rooms is fine.
 - The tools: `new_scene`, `open_viewer`, `show` (fly the person's view),
   `check`, `render` (an image you look at), `query`, `set`, `remove`,
   `write_scene`, `read_scene`, `assets`, `fetch_assets`, `find_model`,
-  `fetch_model`, `materials`, `schema`, `export` (glTF). Resources `stage://guide`, `stage://schema`,
+  `fetch_model`, `materials`, `schema`, `export` (glTF), `calibrate_plan`
+  (fit a level's drawing to scale). Resources `stage://guide`, `stage://schema`,
   and `stage://examples/<name>` hold this guide, the format, and the
   example scenes.
 
@@ -93,7 +94,8 @@ stands in rooms, levels stack. A scene with no rooms is fine.
 - Build order for a thing: a `group` at its place, the biggest part first,
   then the rest in the group's frame. Then look at it: `render` with
   camera `object:<id>` frames it (with `:front`, `:left`, `:top`, a
-  bearing like `:120`, and `:close` for a tight crop), and `around: <id>`
+  bearing like `:120`, and `:close` for a tight crop; `:top` puts a
+  thing's front at the bottom, and a room's north at the top), and `around: <id>`
   renders a turntable of every side, the top, and a close view as one
   sheet. Nothing you build is done until you have looked at its turntable
   and fixed what is wrong: a part floating, a face the wrong way, a beak
@@ -141,9 +143,13 @@ stands in rooms, levels stack. A scene with no rooms is fine.
   top is flat without it.
 - A level may carry a `plan`: `{ "image": "plans/first.jpg", "scale":
   <pixels per meter>, "origin": [px, py] }`, the drawing under the plan
-  view, with `origin` the pixel at plan [0, 0]. Render camera `plan:<level>`
-  to see that level's walls over its drawing; `render` and `show` also take
-  a `level`, which hides everything above it.
+  view, with `origin` the pixel at plan [0, 0]. Don't work the numbers
+  out by hand: `calibrate_plan` takes the two ends of one labeled dimension
+  on the drawing and its length, checks the scale against every other
+  dimension you give it, and writes `plan` only when they all agree within
+  1%. Calibrate on the longest dimension you can read. Render camera
+  `plan:<level>` to see that level's walls over its drawing; `render` and
+  `show` also take a `level`, which hides everything above it.
 - Items built to measure (stairs, railings, counters, wardrobes, rugs,
   walls, columns, screens) take their own `size`; the rest have fixed sizes
   and `scale`.

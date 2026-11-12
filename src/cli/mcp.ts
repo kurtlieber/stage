@@ -1,17 +1,19 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { createServer, type ServerResponse } from 'node:http'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, normalize, resolve } from 'node:path'
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { z } from 'zod'
 import { ASSETS, searchAssets } from '../core/assets.ts'
 import { formatProblem, type CheckResult } from '../core/check.ts'
+import { calibrate, checkDistance, type Pixel } from '../core/calibrate.ts'
 import { ANGLES, allCameras, findCamera, turntable } from '../core/cameras.ts'
+import { describeDiff, diffScenes, sharedRoom } from '../core/diff.ts'
 import { materialNames } from '../core/materials.ts'
 import { QUESTIONS, query } from '../core/query.ts'
-import { FileSceneStore, SCENE_NAME, SCENE_NAME_HELP, type SceneStore } from '../core/scene-store.ts'
+import { FileSceneStore, PART_ONLY, SCENE_NAME, SCENE_NAME_HELP, type SceneStore, type Version } from '../core/scene-store.ts'
 import { COLLECTIONS, jsonSchema, type Collection } from '../core/schema.ts'
 import { format } from '../core/store.ts'
 import { EXAMPLES, PATHS, ROOT, SCHEMAS, checkScene, control, newScene, openViewer, removeEntity, upsert } from './ops.ts'
@@ -129,6 +131,10 @@ const NAMED_PREAMBLE = `# This Stage server
 
 This server is shared over the network and keeps its scenes by name. A scene is named project/variant, like house/main: pass that name wherever the guide below says scene or path, and never a file path. The scenes tool lists them. Files a scene refers to (a level's plan drawing, models fetched with fetch_model) sit in the scene's own folder on the server; name them relative to the scene, as the guide says. open_viewer returns a link to give the person; it opens nothing by itself. export writes exports/scene.glb beside the scene and returns a link that downloads it. The command line the guide mentions is not available here; use the tools.
 
+Every write is kept. history lists a scene's versions; undo takes back the last change, and restore brings back any version, each as a new version, so nothing is lost. Give set, remove, and write_scene a short note, like "desk under the window", so the history reads well.
+
+To try another layout, don't change the scene the person is happy with: create_variant copies it (house/main to house/desk-by-window), make the changes there, then compare the two, which lists every difference and renders both side by side. variants lists a project's variants. delete_variant sets one aside and keeps the last; ask before deleting.
+
 `
 
 // What differs between a local server and a shared one.
@@ -189,6 +195,10 @@ export function buildMcp(context: McpContext): McpServer {
   const starts = `"empty" is the ground and the sun with nothing on it, for a thing built from objects; "room" is one 4 × 3 m room with a door, for a building; the examples are ${EXAMPLE_NAMES.map((n) => `"${n}" (${EXAMPLE_BLURB[n]})`).join(', ')}`
   const newSceneOptions = { name: z.string().default('Untitled scene'), from: z.enum(['empty', 'room', ...EXAMPLE_NAMES]).default('empty') }
   const writes = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
+  // A store with history and variants: the shared one.
+  const files = store instanceof FileSceneStore ? store : undefined
+  // Only a store with history keeps a note, so only it asks for one.
+  const noteArg = (files ? { note: z.string().max(200).optional().describe('A few words on why, for the history, like "desk under the window"') } : {}) as { note: z.ZodOptional<z.ZodString> }
 
   if (named) {
     server.registerTool(
@@ -330,12 +340,13 @@ export function buildMcp(context: McpContext): McpServer {
         scene: sceneArg,
         collection: z.enum(COLLECTIONS),
         entity: z.record(z.string(), z.unknown()).describe('The whole entity, including its id'),
+        ...noteArg,
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
-    ({ scene, collection, entity }) =>
+    ({ scene, collection, entity, note }: { scene: string; collection: string; entity: Record<string, unknown>; note?: string }) =>
       guarded(async () => {
-        const { replaced, result } = await upsert(scene, collection as Collection, entity, store)
+        const { replaced, result } = await upsert(scene, collection as Collection, entity, store, note && `set ${collection} ${String(entity.id)}: ${note}`)
         const look = collection === 'objects' || collection === 'items' ? `\nlook at it: render camera "object:${String(entity.id)}", and around: "${String(entity.id)}" for every side before you call it done.` : ''
         return [text(`${replaced ? 'replaced' : 'added'} ${String(entity.id)}${look}\n${problems(result)}`)]
       }),
@@ -346,12 +357,12 @@ export function buildMcp(context: McpContext): McpServer {
     {
       title: 'Remove an entity',
       description: 'Remove the entity with this id from whichever collection holds it. Removing a room leaves its openings and items dangling; check names them.',
-      inputSchema: { scene: sceneArg, id: z.string() },
+      inputSchema: { scene: sceneArg, id: z.string(), ...noteArg },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     },
-    ({ scene, id }) =>
+    ({ scene, id, note }: { scene: string; id: string; note?: string }) =>
       guarded(async () => {
-        const { collection, result } = await removeEntity(scene, id, store)
+        const { collection, result } = await removeEntity(scene, id, store, note && `removed ${id}: ${note}`)
         return [text(`removed ${id} from ${collection}\n${problems(result)}`)]
       }),
   )
@@ -361,14 +372,65 @@ export function buildMcp(context: McpContext): McpServer {
     {
       title: 'Write the whole scene',
       description: 'Replace the whole scene file. Use it for a new layout, several rooms at once, or a rewrite; prefer set and remove for small changes. Malformed JSON is refused and nothing is written; a scene with errors is written and the errors reported.',
-      inputSchema: { scene: sceneArg, json: z.string().describe('The complete scene as JSON text') },
+      inputSchema: { scene: sceneArg, json: z.string().describe('The complete scene as JSON text'), ...noteArg },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     },
-    ({ scene, json }) =>
+    ({ scene, json, note }: { scene: string; json: string; note?: string }) =>
       guarded(async () => {
         const raw = JSON.parse(json)
-        await store.write(scene, raw)
+        await store.write(scene, raw, note && `rewrote the scene: ${note}`)
         return [text(`written\n${problems(await checkScene(scene, store))}`)]
+      }),
+  )
+
+  if (files) registerVersions(server, files, context)
+
+  server.registerTool(
+    'calibrate_plan',
+    {
+      title: "Fit a level's drawing",
+      description:
+        "Set a level's plan drawing to scale from one dimension on it: two pixels on the drawing (the ends of a dimension line, x right and y down from its top-left corner) and the labeled length between them. `at` is where the first pixel stands in the plan, [0, 0] by default. Give every other dimension you can read as a check: each is measured with the new scale, and nothing is written unless all of them come within `tolerance` (1% by default). Then render plan:<level> and compare the walls with the drawing under them.",
+      inputSchema: {
+        scene: sceneArg,
+        level: z.string().describe('The level id'),
+        drawing: z.string().optional().describe("The drawing's file, relative to the scene, like plans/ground.png; by default the level's current one"),
+        a: z.tuple([z.number(), z.number()]).describe('The first pixel, [x, y]'),
+        b: z.tuple([z.number(), z.number()]).describe('The second pixel, [x, y]'),
+        distance: z.number().positive().describe('Meters between them, as labeled'),
+        at: z.tuple([z.number(), z.number()]).optional().describe('Where the first pixel stands in the plan, [x, y] meters'),
+        checks: z.array(z.object({ a: z.tuple([z.number(), z.number()]), b: z.tuple([z.number(), z.number()]), distance: z.number().positive() })).default([]).describe('Other labeled dimensions, to check the scale against'),
+        tolerance: z.number().positive().max(0.2).default(0.01).describe('The largest error a check may have, as a fraction: 0.01 is 1%'),
+        opacity: z.number().min(0).max(1).optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    ({ scene, level, drawing, a, b, distance, at, checks, tolerance, opacity }) =>
+      guarded(async () => {
+        const calibration = calibrate(a as Pixel, b as Pixel, distance, at)
+        const results = checks.map((check) => checkDistance(calibration, { a: check.a as Pixel, b: check.b as Pixel, distance: check.distance }))
+        const lines = [
+          `scale ${calibration.scale.toFixed(3)} px/m, origin [${calibration.origin.map((v) => v.toFixed(1)).join(', ')}]`,
+          ...results.map((r) => `check ${r.distance} m: measured ${r.measured.toFixed(3)} m, ${(r.error * 100).toFixed(2)}%${Math.abs(r.error) > tolerance ? ' TOO FAR OFF' : ''}`),
+        ]
+        if (results.some((r) => Math.abs(r.error) > tolerance)) return [text(`${lines.join('\n')}\nnothing written: a check is more than ${(tolerance * 100).toFixed(1)}% off. Check the pixels and the labeled lengths, or calibrate on a longer dimension.`)]
+        if (results.length === 0) lines.push('no checks given: measure another dimension with these numbers before trusting them')
+        await store.mutate(
+          scene,
+          (raw) => {
+            const levels = (raw.levels ?? []) as { id?: string; plan?: { image?: string; opacity?: number } }[]
+            const target = levels.find((l) => l.id === level)
+            if (!target) throw new Error(`no level is called "${level}"; the levels are ${levels.map((l) => l.id).join(', ') || 'none'}`)
+            const image = drawing ?? target.plan?.image
+            if (!image) throw new Error(`level ${level} has no drawing yet; name its file with drawing`)
+            const folder = dirname(store.locate(scene))
+            const file = normalize(join(folder, image))
+            if (!file.startsWith(`${folder}/`) || !existsSync(file)) throw new Error(`no file ${image} beside the scene`)
+            target.plan = { image, scale: Number(calibration.scale.toFixed(4)), origin: [Number(calibration.origin[0].toFixed(2)), Number(calibration.origin[1].toFixed(2))], ...(opacity ?? target.plan?.opacity) !== undefined ? { opacity: opacity ?? target.plan?.opacity } : {} } as typeof target.plan
+          },
+          `calibrated the drawing of level ${level}`,
+        )
+        return [text(`${lines.join('\n')}\nwritten to level ${level}; render plan:${level} to compare`)]
       }),
   )
 
@@ -601,6 +663,146 @@ export function buildMcp(context: McpContext): McpServer {
   )
 
   return server
+}
+
+function describeVersion(version: Version, current: number): string {
+  const back = version.back === null ? '' : `, undo goes to ${version.back}`
+  return `${version.version}${version.version === current ? ' (current)' : ''}  ${version.at.slice(0, 16).replace('T', ' ')}  ${version.change}${back}`
+}
+
+// History and variants, for the shared store.
+function registerVersions(server: McpServer, store: FileSceneStore, context: McpContext) {
+  const projectName = z.string().regex(PART_ONLY, 'a project name is lowercase letters, digits, and hyphens').describe('The project, the part of a scene name before the slash')
+
+  server.registerTool(
+    'history',
+    {
+      title: 'Versions of a scene',
+      description: 'Every version of a scene, newest first: when, and what changed. Each write is a version; undo and restore bring an older one back as a new version, so nothing is lost.',
+      inputSchema: { scene: sceneName, limit: z.number().int().min(1).max(500).default(20) },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    ({ scene, limit }) =>
+      guarded(async () => {
+        const { current, versions } = await store.history(scene)
+        const more = versions.length > limit ? `\n... ${versions.length - limit} older` : ''
+        return [text(`${versions.slice(0, limit).map((v) => describeVersion(v, current)).join('\n')}${more}`)]
+      }),
+  )
+
+  server.registerTool(
+    'undo',
+    {
+      title: 'Undo',
+      description: 'Take back the last change to a scene. Again goes one step further back. It writes the earlier version as a new one, so restore can still reach what was undone.',
+      inputSchema: { scene: sceneName },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    ({ scene }) =>
+      guarded(async () => {
+        const version = await store.undo(scene)
+        return [text(`${version.change}; ${scene} is now version ${version.version}\n${problems(await checkScene(scene, store))}`)]
+      }),
+  )
+
+  server.registerTool(
+    'restore',
+    {
+      title: 'Restore a version',
+      description: 'Bring back any earlier version of a scene, from history, as a new version. The versions after it stay.',
+      inputSchema: { scene: sceneName, version: z.number().int().min(1) },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    ({ scene, version }) =>
+      guarded(async () => {
+        const restored = await store.restore(scene, version)
+        return [text(`${restored.change}; ${scene} is now version ${restored.version}\n${problems(await checkScene(scene, store))}`)]
+      }),
+  )
+
+  server.registerTool(
+    'variants',
+    {
+      title: 'Variants of a project',
+      description: 'The variants of one project, like house/main and house/open-kitchen, each with its current version and last change.',
+      inputSchema: { project: projectName },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    ({ project }) =>
+      guarded(async () => {
+        const names = await store.variants(project)
+        if (names.length === 0) return [text(`no project is called "${project}"; scenes lists every scene`)]
+        const lines = await Promise.all(
+          names.map(async (name) => {
+            const { current, versions } = await store.history(name)
+            return `${name}  version ${current}, ${versions[0].at.slice(0, 16).replace('T', ' ')}: ${versions[0].change}`
+          }),
+        )
+        return [text(lines.join('\n'))]
+      }),
+  )
+
+  server.registerTool(
+    'create_variant',
+    {
+      title: 'New variant',
+      description: 'Copy a scene into a new variant of its project, to try a different layout without touching the original: house/main and variant "open-kitchen" make house/open-kitchen. Files beside the scene (plan drawings, models) come along; its history starts fresh. Then make the changes in the new variant, and compare the two.',
+      inputSchema: { scene: sceneName.describe('The scene to copy, project/variant'), variant: z.string().regex(PART_ONLY, 'a variant name is lowercase letters, digits, and hyphens').describe('The new variant name, without the project') },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    ({ scene, variant }) =>
+      guarded(async () => {
+        const name = await store.createVariant(scene, variant)
+        return [text({ scene: name, viewer: await context.openViewer(name) })]
+      }),
+  )
+
+  server.registerTool(
+    'delete_variant',
+    {
+      title: 'Delete a variant',
+      description: "Take a variant out of its project. It is kept aside on the server, not erased, but no tool reaches it again. The last variant of a project is refused. Ask the person first.",
+      inputSchema: { scene: sceneName },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    },
+    ({ scene }) =>
+      guarded(async () => {
+        await store.deleteVariant(scene)
+        return [text(`deleted ${scene}; it is kept aside on the server if it is ever needed back`)]
+      }),
+  )
+
+  server.registerTool(
+    'compare',
+    {
+      title: 'Compare two scenes',
+      description: "What differs between two scenes, usually two variants of a project: every entity one has and the other lacks, and each field that changed. Then both rendered side by side from one camera. By default the camera frames the room the changes are in from above, north up (object:<room>:top), or the whole plan when they span rooms; pass any camera render takes.",
+      inputSchema: {
+        a: sceneName.describe('The first scene, project/variant'),
+        b: sceneName.describe('The second scene, project/variant'),
+        camera: z.string().optional(),
+        width: z.number().int().min(320).max(960).default(640).describe('The width of each of the two images'),
+        height: z.number().int().min(240).max(1080).default(480),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    ({ a, b, camera, width, height }) =>
+      guarded(async () => {
+        const changes = diffScenes((await store.read(a)) as Record<string, unknown>, (await store.read(b)) as Record<string, unknown>)
+        const summary = describeDiff(changes, a, b)
+        const [left, right] = [await checkScene(a, store), await checkScene(b, store)]
+        for (const [name, result] of [[a, left], [b, right]] as const) if (!result.ok) return [text(`${summary}\n\n${name} has errors, so neither is rendered:\n${problems(result)}`)]
+        const room = sharedRoom(changes)
+        const framed = room && findCamera(left.scene!, `object:${room}:top`) && findCamera(right.scene!, `object:${room}:top`) ? `object:${room}:top` : 'plan'
+        const view = camera ?? framed
+        const png = await withRenderer(async (r) => {
+          const first = await r.render(store.locate(a), { camera: view, width, height })
+          const second = await r.render(store.locate(b), { camera: view, width, height })
+          return r.sideBySide([{ label: a, png: first }, { label: b, png: second }], width, height)
+        })
+        return [text(`${summary}\n\ncamera ${view}`), { type: 'image', data: png.toString('base64'), mimeType: 'image/png' }]
+      }),
+  )
 }
 
 async function closeRenderer(): Promise<void> {

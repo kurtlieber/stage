@@ -109,6 +109,7 @@ an example entity for every collection, `query` lists its questions, and
 | `find_model`, `fetch_model` | Search the open model libraries with thumbnails; fetch one beside the scene and place it |
 | `schema` | The format as JSON Schema, whole or per collection |
 | `export` | The built scene as binary glTF |
+| `calibrate_plan` | Fit a level's drawing to scale from one labeled dimension, checked against others |
 
 **Resources.** `stage://guide` (the guide), `stage://schema` (the format),
 and `stage://examples/<name>` for `flat`, `flat-with-bedroom`, `two-storey`,

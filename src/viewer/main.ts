@@ -1072,7 +1072,41 @@ function renderSheet(ids: string[]) {
   document.body.appendChild(sheet)
 }
 
+// A server of named scenes lists them all, so a person can switch to
+// another variant, or another project, from the top bar. A page opened on a
+// file, a share bundle, and a headless render have no list.
+async function showScenePicker(): Promise<void> {
+  if (bundled || headless) return
+  const response = await fetch('./api/scenes', { cache: 'no-store' }).catch(() => undefined)
+  if (!response?.ok) return
+  const { scenes } = (await response.json().catch(() => ({}))) as { scenes?: string[] }
+  if (!scenes || scenes.length < 2 || !scenes.includes(scenePath)) return
+  const picker = $('scenes') as HTMLSelectElement
+  const projects = new Map<string, string[]>()
+  for (const name of scenes) {
+    const project = name.split('/')[0]
+    projects.set(project, [...(projects.get(project) ?? []), name])
+  }
+  for (const [project, names] of projects) {
+    const group = document.createElement('optgroup')
+    group.label = project
+    for (const name of names) {
+      const option = document.createElement('option')
+      option.value = name
+      option.textContent = name
+      group.append(option)
+    }
+    picker.append(group)
+  }
+  picker.value = scenePath
+  picker.addEventListener('change', () => {
+    location.search = `?scene=${picker.value}`
+  })
+  picker.classList.remove('hidden')
+}
+
 async function start() {
+  void showScenePicker()
   try {
     // Each phase is recorded, so a render that times out says where it stopped.
     const phase = (name: string) => (document.body.dataset.phase = name)

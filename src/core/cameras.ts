@@ -102,12 +102,14 @@ export function frameCamera(scene: Scene, spec: string): Camera | undefined {
   if (!target) return undefined
   const close = rest.includes('close')
   const angle = rest.find((r) => r !== 'close')
-  const { box, yaw } = target
+  const { box, yaw, kind } = target
   const center = [(box.min[0] + box.max[0]) / 2, (box.min[1] + box.max[1]) / 2, (box.min[2] + box.max[2]) / 2]
   let bearing: number
   let elevation: number
   if (angle === undefined) [bearing, elevation] = [yaw - 35, 28]
-  else if (angle === 'top') [bearing, elevation] = [yaw, 84]
+  // A thing is seen from above with its front at the bottom of the picture;
+  // a room has no front, so it is seen from the south, north up like the plan.
+  else if (angle === 'top') [bearing, elevation] = [kind === 'room' ? 180 : yaw, 84]
   else if ((ANGLES as readonly string[]).includes(angle)) [bearing, elevation] = [yaw + OFFSETS[angle as (typeof ANGLES)[number]], 24]
   else if (/^-?\d+(\.\d+)?$/.test(angle)) [bearing, elevation] = [Number(angle), 24]
   else return undefined

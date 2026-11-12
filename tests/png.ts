@@ -1,4 +1,4 @@
-import { inflateSync } from 'node:zlib'
+import { crc32, deflateSync, inflateSync } from 'node:zlib'
 
 // Enough of a PNG decoder to compare renders: 8-bit RGB or RGBA, no
 // interlacing, which is what headless Chromium writes.
@@ -62,4 +62,26 @@ export function meanDifference(a: Buffer, b: Buffer): number {
   let sum = 0
   for (let i = 0; i < p.data.length; i++) sum += Math.abs(p.data[i] - q.data[i])
   return sum / p.data.length
+}
+
+// A flat 8-bit RGB PNG filled by `color(x, y)`, for test drawings.
+export function encodePng(width: number, height: number, color: (x: number, y: number) => [number, number, number]): Buffer {
+  const raw = Buffer.alloc((width * 3 + 1) * height)
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) raw.set(color(x, y), y * (width * 3 + 1) + 1 + x * 3)
+  }
+  const chunk = (type: string, body: Buffer) => {
+    const head = Buffer.alloc(8)
+    head.writeUInt32BE(body.length, 0)
+    head.write(type, 4, 'ascii')
+    const tail = Buffer.alloc(4)
+    tail.writeUInt32BE(crc32(Buffer.concat([head.subarray(4), body])), 0)
+    return Buffer.concat([head, body, tail])
+  }
+  const header = Buffer.alloc(13)
+  header.writeUInt32BE(width, 0)
+  header.writeUInt32BE(height, 4)
+  header[8] = 8
+  header[9] = 2
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', header), chunk('IDAT', deflateSync(raw)), chunk('IEND', Buffer.alloc(0))])
 }

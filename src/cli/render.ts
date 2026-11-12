@@ -187,6 +187,37 @@ export class Renderer {
     return Buffer.from(data, 'base64')
   }
 
+  // Images next to each other, each with its label above it, as one image:
+  // two variants of a room, side by side. Drawn by the same browser.
+  async sideBySide(panels: { label: string; png: Buffer }[], width: number, height: number): Promise<Buffer> {
+    const labelH = 32
+    const gap = 8
+    const page = { width: panels.length * width + (panels.length - 1) * gap, height: height + labelH }
+    await this.devtools.send('Emulation.setDeviceMetricsOverride', { ...page, deviceScaleFactor: 1, mobile: false }, this.sessionId)
+    await this.devtools.send('Page.navigate', { url: 'about:blank' }, this.sessionId)
+    const deadline = Date.now() + 10000
+    for (;;) {
+      const { result } = await this.devtools.send('Runtime.evaluate', { expression: 'location.href === "about:blank" && document.readyState === "complete"', returnByValue: true }, this.sessionId)
+      if (result?.value === true) break
+      if (Date.now() > deadline) throw new Error('the comparison page did not open')
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+    const escape = (s: string) => s.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`)
+    const html = `<!doctype html><html><body style="margin:0;background:#1d1d1f;display:flex;gap:${gap}px">${panels
+      .map(
+        (p) =>
+          `<figure style="margin:0;width:${width}px"><figcaption style="height:${labelH}px;line-height:${labelH}px;padding:0 10px;color:#e8e6e1;font:600 15px system-ui,sans-serif">${escape(p.label)}</figcaption><img style="display:block;width:${width}px;height:${height}px" src="data:image/png;base64,${p.png.toString('base64')}"></figure>`,
+      )
+      .join('')}</body></html>`
+    await this.devtools.send(
+      'Runtime.evaluate',
+      { expression: `(async () => { document.open(); document.write(${JSON.stringify(html)}); document.close(); await Promise.all([...document.images].map((i) => i.decode())); return true })()`, awaitPromise: true, returnByValue: true },
+      this.sessionId,
+    )
+    const { data } = await this.devtools.send('Page.captureScreenshot', { format: 'png' }, this.sessionId)
+    return Buffer.from(data, 'base64')
+  }
+
   // The scene as a binary glTF, built by the same page that renders it.
   async export(scene: string, timeout = 120000): Promise<Buffer> {
     this.errors.length = 0

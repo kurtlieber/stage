@@ -194,8 +194,13 @@ export async function writeLock(lock: Lock): Promise<void> {
   const repo: Lock = { version: 1, textures: pick(lock.textures, (id) => builtin.textures.has(id)), skies: lock.skies, models: pick(lock.models, (id) => builtin.models.has(id)) }
   const cache: Lock = { version: 1, textures: pick(lock.textures, (id) => !builtin.textures.has(id)), skies: {}, models: pick(lock.models, (id) => !builtin.models.has(id)) }
   for (const [path, data] of [[LOCK_PATH, repo], [CACHE_LOCK, cache]] as const) {
+    const text = `${JSON.stringify(data, null, 2)}\n`
+    // An installed copy may not own its repository lock (the Docker image
+    // runs as a user that cannot write /app), so a lock that would not
+    // change is left alone.
+    if (existsSync(path) && (await readFile(path, 'utf8')) === text) continue
     mkdirSync(dirname(path), { recursive: true })
-    await writeFile(`${path}.tmp`, `${JSON.stringify(data, null, 2)}\n`)
+    await writeFile(`${path}.tmp`, text)
     await rename(`${path}.tmp`, path)
   }
 }

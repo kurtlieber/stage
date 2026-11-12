@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
-import { mkdtemp, readdir } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, writeFile } from 'node:fs/promises'
 import { request } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -69,10 +69,11 @@ async function allFiles(folder: string): Promise<string[]> {
 test('no tool takes a file path, and every scene argument must be a name', async () => {
   const { tools } = await client.listTools()
   const names = tools.map((t) => t.name)
-  for (const expected of ['new_scene', 'scenes', 'open_viewer', 'show', 'check', 'render', 'query', 'read_scene', 'set', 'remove', 'write_scene', 'export', 'fetch_model']) assert.ok(names.includes(expected), expected)
+  for (const expected of ['new_scene', 'scenes', 'open_viewer', 'show', 'check', 'render', 'query', 'read_scene', 'set', 'remove', 'write_scene', 'export', 'fetch_model', 'history', 'undo', 'restore', 'variants', 'create_variant', 'delete_variant', 'compare', 'calibrate_plan']) assert.ok(names.includes(expected), expected)
   for (const tool of tools) {
     const properties = (tool.inputSchema.properties ?? {}) as Record<string, { pattern?: string; type?: string }>
     for (const forbidden of ['path', 'out', 'file', 'plan', 'image']) assert.ok(!(forbidden in properties), `${tool.name} takes "${forbidden}"`)
+    for (const name of ['scene', 'a', 'b']) if (name in properties && properties[name].type === 'string') assert.ok(properties[name].pattern, `${tool.name}'s ${name} has no pattern`)
     if ('scene' in properties) assert.ok(properties.scene.pattern, `${tool.name}'s scene has no pattern`)
   }
   const { prompts } = await client.listPrompts()
@@ -102,6 +103,86 @@ test('a scene is built by name over HTTP', async () => {
   assert.equal(again.isError, true)
   assert.match(again.text, /already exists/)
   assert.doesNotMatch(again.text, new RegExp(root))
+})
+
+test('history, undo and restore over HTTP, with the note kept', async () => {
+  await call('new_scene', { scene: 'versions/main', from: 'room' })
+  const desk = { id: 'desk', asset: 'table/desk', room: 'room', at: [1, 1] }
+  assert.equal((await call('set', { scene: 'versions/main', collection: 'items', entity: desk, note: 'a desk to start' })).isError, false)
+  assert.equal((await call('set', { scene: 'versions/main', collection: 'items', entity: { ...desk, at: [2, 1] } })).isError, false)
+  const history = (await call('history', { scene: 'versions/main' })).text.split('\n')
+  assert.match(history[0], /^3 \(current\) .* set items desk, undo goes to 2$/)
+  assert.match(history[1], /^2 .* set items desk: a desk to start, undo goes to 1$/)
+  assert.match(history[2], /^1 .* created$/)
+
+  const undo = await call('undo', { scene: 'versions/main' })
+  assert.match(undo.text, /^undo: back to version 2; versions\/main is now version 4/)
+  assert.match((await call('read_scene', { scene: 'versions/main' })).text, /"at": \[\s*1,\s*1\s*\]/)
+  assert.match((await call('restore', { scene: 'versions/main', version: 1 })).text, /^restored version 1; versions\/main is now version 5/)
+  assert.doesNotMatch((await call('read_scene', { scene: 'versions/main' })).text, /"desk"/)
+  assert.match((await call('restore', { scene: 'versions/main', version: 5 })).text, /already the current one/)
+  assert.match((await call('history', { scene: 'versions/main', limit: 2 })).text, /\.\.\. 3 older$/)
+})
+
+test('variants over HTTP: copy, list, keep apart, and keep one', async () => {
+  await call('new_scene', { scene: 'cabin/main', from: 'room' })
+  const created = await call('create_variant', { scene: 'cabin/main', variant: 'bunks' })
+  assert.equal(created.isError, false, created.text)
+  assert.deepEqual(JSON.parse(created.text), { scene: 'cabin/bunks', viewer: `${PUBLIC}/?scene=cabin/bunks` })
+  await call('set', { scene: 'cabin/bunks', collection: 'items', entity: { id: 'bed', asset: 'bed/single', room: 'room', at: [1, 1] } })
+  assert.doesNotMatch((await call('read_scene', { scene: 'cabin/main' })).text, /"bed"/)
+  const listed = (await call('variants', { project: 'cabin' })).text.split('\n')
+  assert.match(listed[0], /^cabin\/bunks {2}version 2, .*: set items bed$/)
+  assert.match(listed[1], /^cabin\/main {2}version 1, .*: created$/)
+  assert.match((await call('variants', { project: 'nope' })).text, /no project is called "nope"/)
+  assert.equal((await call('variants', { project: '../x' })).isError, true)
+  assert.equal((await call('create_variant', { scene: 'cabin/main', variant: '../x' })).isError, true)
+  assert.match((await call('create_variant', { scene: 'cabin/main', variant: 'bunks' })).text, /already exists/)
+
+  assert.match((await call('delete_variant', { scene: 'cabin/bunks' })).text, /^deleted cabin\/bunks/)
+  const last = await call('delete_variant', { scene: 'cabin/main' })
+  assert.equal(last.isError, true)
+  assert.match(last.text, /the only variant of cabin/)
+  assert.doesNotMatch((await call('scenes', {})).text, /cabin\/bunks/)
+})
+
+test('calibrate_plan writes the scale only when every check agrees', async () => {
+  await call('new_scene', { scene: 'drawn/main', from: 'room' })
+  await mkdir(join(root, 'drawn', 'main', 'plans'), { recursive: true })
+  await writeFile(join(root, 'drawn', 'main', 'plans', 'ground.png'), 'not really a png')
+  const level = JSON.parse((await call('read_scene', { scene: 'drawn/main' })).text).levels[0].id
+  const base = { scene: 'drawn/main', level, drawing: 'plans/ground.png', a: [100, 500], b: [600, 500], distance: 10 }
+
+  const off = await call('calibrate_plan', { ...base, checks: [{ a: [100, 500], b: [100, 0], distance: 9.7 }] })
+  assert.match(off.text, /check 9.7 m: measured 10.000 m, 3.09% TOO FAR OFF/)
+  assert.match(off.text, /nothing written/)
+  assert.equal(JSON.parse((await call('read_scene', { scene: 'drawn/main' })).text).levels[0].plan, undefined)
+
+  const good = await call('calibrate_plan', { ...base, checks: [{ a: [100, 500], b: [100, 0], distance: 10.02 }], opacity: 0.5 })
+  assert.equal(good.isError, false, good.text)
+  assert.match(good.text, /^scale 50.000 px\/m, origin \[100.0, 500.0\]/)
+  assert.deepEqual(JSON.parse((await call('read_scene', { scene: 'drawn/main' })).text).levels[0].plan, { image: 'plans/ground.png', scale: 50, origin: [100, 500], opacity: 0.5 })
+  assert.match((await call('history', { scene: 'drawn/main' })).text, /calibrated the drawing of level/)
+
+  for (const drawing of ['../../../etc/passwd', 'plans/missing.png', '/etc/passwd']) {
+    const reply = await call('calibrate_plan', { ...base, drawing })
+    assert.equal(reply.isError, true, drawing)
+    assert.match(reply.text, /beside the scene/)
+  }
+  assert.match((await call('calibrate_plan', { ...base, level: 'roof' })).text, /no level is called "roof"/)
+})
+
+test('compare names the differences between two variants', async () => {
+  await call('new_scene', { scene: 'study/a', from: 'room' })
+  await call('set', { scene: 'study/a', collection: 'items', entity: { id: 'desk', asset: 'table/desk', room: 'room', at: [1, 1] } })
+  await call('create_variant', { scene: 'study/a', variant: 'b' })
+  await call('set', { scene: 'study/b', collection: 'items', entity: { id: 'desk', asset: 'table/desk', room: 'room', at: [2, 1] } })
+  // Only the text: a broken scene stops before any render, so no browser.
+  await call('write_scene', { scene: 'study/b', json: JSON.stringify({ ...JSON.parse((await call('read_scene', { scene: 'study/b' })).text), items: [{ id: 'desk', asset: 'table/desk', room: 'nowhere', at: [2, 1] }] }) })
+  const reply = await call('compare', { a: 'study/a', b: 'study/b' })
+  assert.match(reply.text, /^from study\/a to study\/b:\n~ item desk: room "room" -> "nowhere"; at \[1,1\] -> \[2,1\]/)
+  assert.match(reply.text, /study\/b has errors, so neither is rendered/)
+  assert.equal((await call('compare', { a: 'study/a', b: '../x' })).isError, true)
 })
 
 test('paths and climbing names are refused, and nothing is written', async () => {
@@ -196,6 +277,17 @@ test('the viewer serves scenes by name and no file outside the folder', async ()
   assert.equal((await raw(`${base}/files/${sceneToken('house/served')}/..%2F..%2Fother%2Fscene.json`)).status, 404)
   assert.equal((await raw(`${base}/api/scene?path=house/served`, { host: 'viewer.example' })).status, 200)
   assert.equal((await raw(`${base}/api/scene?path=house/served`, { host: 'evil.example' })).status, 403)
+
+  // The list behind the viewer's scene picker.
+  const list = await raw(`${base}/api/scenes`)
+  assert.equal(list.status, 200)
+  assert.ok(JSON.parse(list.body).scenes.includes('house/served'))
+  const single = await startServer(0)
+  try {
+    assert.equal((await raw(`${single.url.replace(/\/$/, '')}/api/scenes`)).status, 404)
+  } finally {
+    await single.close()
+  }
 })
 
 test('the local server keeps file paths, as before', async () => {
