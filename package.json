@@ -40,15 +40,15 @@
   ],
   "scripts": {
     "build": "vite build",
-    "test": "node --no-warnings --test tests/core.test.ts",
+    "test": "node --no-warnings --test tests/core.test.ts tests/scene-store.test.ts tests/http.test.ts",
     "typecheck": "tsc --noEmit",
     "test:render": "node --no-warnings --test tests/render.test.ts",
     "prepare": "vite build"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.20.0",
+    "@modelcontextprotocol/sdk": "1.32.2",
     "three": "^0.181.0",
-    "zod": "^4.1.0"
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

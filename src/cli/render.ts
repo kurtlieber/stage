@@ -120,9 +120,13 @@ export class Renderer {
         '--use-angle=swiftshader',
         '--enable-unsafe-swiftshader',
         '--ignore-gpu-blocklist',
+        // Extra flags from the environment, like --no-sandbox in a container
+        // whose seccomp profile refuses Chromium's own sandbox.
+        ...(process.env.STAGE_CHROMIUM_FLAGS ?? '').split(/\s+/).filter(Boolean),
         'about:blank',
       ],
-      { stdio: ['ignore', 'ignore', 'pipe'] },
+      // Its own temporary files go in the profile too, so close removes them.
+      { stdio: ['ignore', 'ignore', 'pipe'], env: { ...process.env, TMPDIR: profile } },
     )
     const endpoint = await new Promise<string>((resolve, reject) => {
       let output = ''
@@ -208,7 +212,12 @@ export class Renderer {
 
   async close() {
     this.devtools.close()
+    // Chromium writes to its profile as it shuts down, so wait for it to go
+    // before removing the profile, or a server leaves one behind per close.
+    const running = this.browser.exitCode === null && this.browser.signalCode === null
+    const gone = running ? new Promise<void>((done) => this.browser.once('exit', () => done())) : Promise.resolve()
     this.browser.kill()
+    await Promise.race([gone, new Promise<void>((done) => setTimeout(done, 5000).unref())])
     await this.server.close()
     await rm(this.profile, { recursive: true, force: true }).catch(() => {})
   }
