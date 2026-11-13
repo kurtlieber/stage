@@ -244,7 +244,8 @@ export function buildMcp(context: McpContext): McpServer {
       },
       () => guarded(async () => {
         const names = await store.list()
-        return [text(names.length ? names.join('\n') : 'no scenes yet; start one with new_scene')]
+        // A chat may meet this list without the guide, so it says whose scenes they are.
+        return [text(names.length ? `Every Stage scene on this server, named project/variant:\n${names.join('\n')}` : 'This Stage server has no scenes yet; start one with new_scene.')]
       }),
     )
   } else {
@@ -754,7 +755,12 @@ function registerVersions(server: McpServer, store: FileSceneStore, context: Mcp
     ({ project }) =>
       guarded(async () => {
         const names = await store.variants(project)
-        if (names.length === 0) return [text(`no project is called "${project}"; scenes lists every scene`)]
+        if (names.length === 0) {
+          // Asked for "the stage scenes", a chat takes stage for a project: say what is here.
+          const projects = [...new Set((await store.list()).map((name) => name.split('/')[0]))]
+          const here = projects.length ? `Its projects: ${projects.join(', ')}.` : 'It has no scenes yet.'
+          return [text(`This Stage server has no project called "${project}". ${here} Every scene here is a Stage scene; scenes lists them all.`)]
+        }
         const lines = await Promise.all(
           names.map(async (name) => {
             const { current, versions } = await store.history(name)
