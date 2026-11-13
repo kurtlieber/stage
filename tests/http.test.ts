@@ -112,6 +112,7 @@ test('a scene is built by name over HTTP', async () => {
   assert.equal((await call('check', { scene: 'house/main' })).isError, false)
   assert.equal((await call('query', { scene: 'house/main', question: 'rooms' })).isError, false)
   assert.match((await call('scenes', {})).text, /^house\/main$/m)
+  assert.match((await call('scenes', {})).text, /^Every Stage scene on this server, named project\/variant:\nhouse\/main$/)
 
   const removed = await call('remove', { scene: 'house/main', id: 'desk' })
   assert.equal(removed.isError, false, removed.text)
@@ -152,7 +153,9 @@ test('variants over HTTP: copy, list, keep apart, and keep one', async () => {
   const listed = (await call('variants', { project: 'cabin' })).text.split('\n')
   assert.match(listed[0], /^cabin\/bunks {2}version 2, .*: set items bed$/)
   assert.match(listed[1], /^cabin\/main {2}version 1, .*: created$/)
-  assert.match((await call('variants', { project: 'nope' })).text, /no project is called "nope"/)
+  const nope = (await call('variants', { project: 'stage' })).text
+  assert.match(nope, /^This Stage server has no project called "stage"\. Its projects: [a-z, ]*\bcabin\b/)
+  assert.match(nope, /Every scene here is a Stage scene; scenes lists them all\.$/)
   assert.equal((await call('variants', { project: '../x' })).isError, true)
   assert.equal((await call('create_variant', { scene: 'cabin/main', variant: '../x' })).isError, true)
   assert.match((await call('create_variant', { scene: 'cabin/main', variant: 'bunks' })).text, /already exists/)
