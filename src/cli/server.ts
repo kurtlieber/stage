@@ -240,6 +240,25 @@ export async function startServer(port = DEFAULT_PORT, options: ServeOptions = {
       return send(response, 404, { error: 'no such endpoint' })
     }
 
+    // Opened bare, the page would take itself for a share bundle and look for
+    // scene.json beside it. A server of named scenes opens one of its own:
+    // the first main variant, else the first scene. The top bar switches.
+    if (url.pathname === '/' && store?.named && !url.searchParams.get('scene')) {
+      const names = await store.list()
+      const scene = names.find((name) => name.endsWith('/main')) ?? names[0]
+      if (!scene) {
+        response.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' })
+        response.end('No scenes yet. Ask Claude to start one with new_scene, named project/variant.\n')
+        return
+      }
+      const rest = new URLSearchParams(url.search)
+      rest.delete('scene')
+      const query = rest.toString()
+      response.writeHead(302, { location: `/?scene=${scene}${query ? `&${query}` : ''}`, 'cache-control': 'no-store' })
+      response.end()
+      return
+    }
+
     const relative = normalize(decodeURIComponent(url.pathname)).replace(/^(\.\.[/\\])+/, '')
     let file = join(DIST, relative === '/' ? 'index.html' : relative)
     if (!file.startsWith(DIST) || !existsSync(file) || statSync(file).isDirectory()) file = join(DIST, 'index.html')

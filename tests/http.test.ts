@@ -11,6 +11,7 @@ import { FileSceneStore } from '../src/core/scene-store.ts'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { LOCAL, buildMcp, startMcpHttp, type McpHttpServer } from '../src/cli/mcp.ts'
 import { sceneToken, startServer, type StageServer } from '../src/cli/server.ts'
+import { newScene } from '../src/cli/ops.ts'
 
 // The shared server: MCP over HTTP with scenes by name, beside a viewer that
 // serves the same folder. Nothing here needs a browser.
@@ -46,7 +47,7 @@ async function call(name: string, args: Record<string, unknown>): Promise<Reply>
 }
 
 // A raw request, so the test can send any Host header.
-function raw(url: string, options: { method?: string; host?: string; body?: string } = {}): Promise<{ status: number; body: string }> {
+function raw(url: string, options: { method?: string; host?: string; body?: string } = {}): Promise<{ status: number; body: string; location?: string; type?: string }> {
   const target = new URL(url)
   return new Promise((done, fail) => {
     const req = request(
@@ -54,7 +55,7 @@ function raw(url: string, options: { method?: string; host?: string; body?: stri
       (res) => {
         let body = ''
         res.on('data', (chunk) => (body += chunk))
-        res.on('end', () => done({ status: res.statusCode ?? 0, body }))
+        res.on('end', () => done({ status: res.statusCode ?? 0, body, location: res.headers.location, type: res.headers['content-type'] }))
       },
     )
     req.on('error', fail)
@@ -302,6 +303,43 @@ test('the viewer serves scenes by name and no file outside the folder', async ()
   const single = await startServer(0)
   try {
     assert.equal((await raw(`${single.url.replace(/\/$/, '')}/api/scenes`)).status, 404)
+  } finally {
+    await single.close()
+  }
+})
+
+// Opened bare, with no ?scene=, the page takes itself for a share bundle and
+// looks for scene.json beside it. A server of named scenes sends a bare
+// visit to a scene instead, and says so when it has none.
+test('the bare address of a viewer of named scenes opens a scene', async () => {
+  const folder = await mkdtemp(join(tmpdir(), 'stage-home-'))
+  const store = new FileSceneStore(folder)
+  const home = await startServer(0, { store })
+  try {
+    const base = home.url.replace(/\/$/, '')
+    const empty = await raw(`${base}/`)
+    assert.equal(empty.status, 200)
+    assert.match(empty.type ?? '', /^text\/plain/)
+    assert.match(empty.body, /No scenes yet/)
+
+    await newScene('house/office', 'Office', 'room', store)
+    const onlyOffice = await raw(`${base}/`)
+    assert.equal(onlyOffice.status, 302)
+    assert.equal(onlyOffice.location, '/?scene=house/office')
+
+    await newScene('house/main', 'House', 'room', store)
+    await newScene('barn/loft', 'Loft', 'room', store)
+    assert.equal((await raw(`${base}/`)).location, '/?scene=house/main')
+    assert.equal((await raw(`${base}/?scene=&walk`)).location, '/?scene=house/main&walk=')
+    const opened = await raw(`${base}/?scene=house/office`)
+    assert.equal(opened.status, 200)
+    assert.match(opened.body, /^<!doctype html>/i)
+  } finally {
+    await home.close()
+  }
+  const single = await startServer(0)
+  try {
+    assert.equal((await raw(`${single.url.replace(/\/$/, '')}/`)).status, 200)
   } finally {
     await single.close()
   }
