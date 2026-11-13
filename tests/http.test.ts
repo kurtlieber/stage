@@ -307,6 +307,18 @@ test('the viewer serves scenes by name and no file outside the folder', async ()
   }
 })
 
+// claude.ai loads a few tools at a time by search, so whichever ones it
+// loads must say they are Stage's and point at the guide.
+test('every other tool says it is Stage and points at the guide', async () => {
+  const { tools } = await client.listTools()
+  assert.ok(tools.length > 20)
+  for (const tool of tools.slice(1)) {
+    assert.match(tool.description ?? '', /[.)] Part of Stage, the 3D scene tool\. If the Stage guide is not in your context yet, call the `guide` tool first\.$/, tool.name)
+    assert.equal((tool.description ?? '').match(/Part of Stage/g)?.length, 1, tool.name)
+  }
+  assert.doesNotMatch(tools[0].description ?? '', /Part of Stage/)
+})
+
 test('the local server keeps file paths, as before', async () => {
   const [clientSide, serverSide] = InMemoryTransport.createLinkedPair()
   const server = buildMcp(LOCAL)
@@ -326,6 +338,7 @@ test('the local server keeps file paths, as before', async () => {
     const guide = (await local.callTool({ name: 'guide', arguments: {} })) as { content: { text: string }[]; isError?: boolean }
     assert.ok(!guide.isError)
     assert.equal(guide.content[0].text, local.getInstructions())
+    for (const tool of tools.slice(1)) assert.match(tool.description ?? '', /call the `guide` tool first\.$/, tool.name)
 
     const folder = await mkdtemp(join(tmpdir(), 'stage-local-'))
     const reply = (await local.callTool({ name: 'new_scene', arguments: { path: join(folder, 'flat'), from: 'room' } })) as { content: { text: string }[]; isError?: boolean }

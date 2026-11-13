@@ -184,6 +184,9 @@ export function namedContext(store: SceneStore, urls: { publicUrl: string; viewe
   }
 }
 
+// The last sentence of every tool's description but the guide's.
+const GUIDE_POINTER = 'Part of Stage, the 3D scene tool. If the Stage guide is not in your context yet, call the `guide` tool first.'
+
 // The tools, resources, and prompts, for one connection (stdio) or one
 // request (stateless HTTP).
 export function buildMcp(context: McpContext): McpServer {
@@ -209,12 +212,16 @@ export function buildMcp(context: McpContext): McpServer {
     'guide',
     {
       title: 'Read first: how Stage works',
-      description: 'Stage is the 3D scene tool behind these tools: rooms, floors, furniture and objects, kept as scene files and rendered as images. Call this once, before any other Stage tool, unless the Stage guide is already in your context. It returns the guide: the scene format, the order of work, and how this server keeps its scenes.',
+      description: 'Stage is the 3D scene tool behind these tools: rooms, floors, furniture and objects, kept as scene files and rendered as images. Call this once, before any other Stage tool, unless the Stage guide is already in your context. It returns the guide, the instructions for Stage: the scene format, the order of work, and how this server keeps its scenes.',
       inputSchema: {},
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     () => guarded(async () => [text(instructions)]),
   )
+  // claude.ai hands the model only the few tools its search turns up, never
+  // the whole list, so every other tool says whose it is and where the guide is.
+  const register = server.registerTool.bind(server)
+  server.registerTool = ((name, config, callback) => register(name, { ...config, description: `${config.description} ${GUIDE_POINTER}` }, callback)) as typeof server.registerTool
 
   if (named) {
     server.registerTool(
