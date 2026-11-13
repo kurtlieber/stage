@@ -149,6 +149,13 @@ export function roomElevation(scene: Scene, room: Room): number {
   return levelOf(scene, room)?.elevation ?? 0
 }
 
+// Each level's storey, in levelsByElevation order: a grade level belongs to
+// the storey it stands in, so its split levels show and hide together.
+export function storeys(scene: Scene): number[] {
+  let storey = -1
+  return levelsByElevation(scene).map((level) => (level.grade && storey >= 0 ? storey : ++storey))
+}
+
 // The next level up that stands over this one. A grade level is a split
 // level beside the storey on the ground, a few steps up or down, so it is
 // never the floor above anything.

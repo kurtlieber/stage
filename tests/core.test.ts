@@ -6,7 +6,7 @@ import { test } from 'node:test'
 import { measureGltf } from '../src/cli/assets.ts'
 import { searchAssets } from '../src/core/assets.ts'
 import { check } from '../src/core/check.ts'
-import { distanceToSegment, slabAbove, walls, wallPieces } from '../src/core/geometry.ts'
+import { distanceToSegment, slabAbove, storeys, walls, wallPieces } from '../src/core/geometry.ts'
 import { query } from '../src/core/query.ts'
 import { materialSpec } from '../src/core/materials.ts'
 import { format, readScene, writeScene } from '../src/core/store.ts'
@@ -262,6 +262,12 @@ test('without grade, the same wing floats on its own floor and check says it sta
   const east = walls(scene).filter((w) => w.a[0] === 9 && w.b[0] === 9)
   assert.equal(Math.min(...east.map((w) => w.elevation)), 0.6)
   assert.ok(messages(splitLevel(false)).some((m) => /"wing" starts at 0.6 m, inside "step"/.test(m)))
+})
+
+test('split levels share the storey they stand in, the floor over them starts the next', () => {
+  // lower 0, step 0.3 and wing 0.6 stand on the ground; first is over them.
+  assert.deepEqual(storeys(check(splitLevel(true)).scene!), [0, 0, 0, 1])
+  assert.deepEqual(storeys(check(splitLevel(false)).scene!), [0, 1, 2, 3])
 })
 
 test('a person climbs the horseshoe stair and cannot step into the well', async () => {
