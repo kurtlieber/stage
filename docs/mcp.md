@@ -90,7 +90,10 @@ and its parts, rendering and looking after each step)
 before its first call. Some clients never show the model either
 instructions or resources (claude.ai is one), so the same text is also the
 `guide` tool, listed first, whose description tells the model to call it
-before any other Stage tool. The `stage://guide` resource carries the guide
+before any other Stage tool. A client can also hand the model only the
+few tools a search turns up, never the whole list (claude.ai does), so
+every other tool's description ends with the same pointer: it is part of
+Stage, and to call `guide` first. The `stage://guide` resource carries the guide
 too, and `stage skill install` puts it where Claude Code and Codex read
 skills.
 
