@@ -87,9 +87,12 @@ instructions at startup, so a client that shows them to the model knows
 the scene format, free objects and assemblies, how several floors work,
 and the order of work (rooms, then openings, then furniture, or a group
 and its parts, rendering and looking after each step)
-before its first call. Clients that ignore instructions still get the
-guide from the `stage://guide` resource, and `stage skill install` puts it
-where Claude Code and Codex read skills.
+before its first call. Some clients never show the model either
+instructions or resources (claude.ai is one), so the same text is also the
+`guide` tool, listed first, whose description tells the model to call it
+before any other Stage tool. The `stage://guide` resource carries the guide
+too, and `stage skill install` puts it where Claude Code and Codex read
+skills.
 
 **Tools.** Each one says what it is for and what to call next; `set` carries
 an example entity for every collection, `query` lists its questions, and
@@ -97,6 +100,7 @@ an example entity for every collection, `query` lists its questions, and
 
 | Tool | Does |
 | --- | --- |
+| `guide` | The server instructions as a tool result, for clients that drop instructions |
 | `new_scene` | Start a scene, empty or from an example |
 | `open_viewer` | Open it in the person's browser; the page follows the file |
 | `show` | Point their view at a camera, a level, or an entity |
