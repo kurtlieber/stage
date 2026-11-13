@@ -21,7 +21,8 @@ html, body {
 canvas#view { display: block; width: 100vw; height: 100vh; }
 
 .hud { position: fixed; inset: 0; pointer-events: none; }
-.hud .top { position: absolute; top: 16px; left: 16px; display: flex; gap: 10px; align-items: center; }
+.hud .top { position: absolute; top: 16px; left: 16px; right: 100px; display: flex; gap: 10px; align-items: center; }
+.hud .top > * { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hud .bottom { position: absolute; left: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 8px; max-width: min(560px, calc(100vw - 32px)); }
 
 .title, .chip, .panel {
@@ -32,6 +33,11 @@ canvas#view { display: block; width: 100vw; height: 100vh; }
 }
 .title { font-weight: 600; font-size: 15px; }
 .chip { color: var(--muted); font-size: 13px; }
+.scene-picker { pointer-events: auto; border: 0; font: inherit; font-size: 13px; color: var(--text); max-width: 46vw; cursor: pointer; }
+.scene-picker:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.scene-picker option, .scene-picker optgroup { color: #1a1a1a; }
+/* On a phone the menu already marks the place, and the picker needs the room. */
+@media (max-width: 600px) { #camera { display: none; } }
 .panel { pointer-events: auto; }
 .hidden { display: none !important; }
 

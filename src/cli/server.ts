@@ -185,6 +185,13 @@ export async function startServer(port = DEFAULT_PORT, options: ServeOptions = {
       return
     }
 
+    // The scenes a person can switch between. Only a server of named scenes
+    // has a list; one opened on a file shows that file alone.
+    if (url.pathname === '/api/scenes') {
+      if (!store?.named) return send(response, 404, { error: 'this viewer shows one scene file; there is no list' })
+      return send(response, 200, { scenes: await store.list() })
+    }
+
     if (url.pathname.startsWith('/api/')) {
       const path = locate(url.searchParams.get('path'))
       if (!path) return send(response, 400, { error: store ? 'path must be a scene name, project/variant' : 'path must be an absolute path to a .json scene file' })

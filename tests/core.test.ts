@@ -474,3 +474,19 @@ test('object cameras frame a thing from the side asked for, closer when asked', 
   assert.equal(turntable(scene, 'cart').length, 10)
   assert.throws(() => turntable(scene, 'nobody'), /nothing is called/)
 })
+
+test("a room's top view has north at the top, as the plan has", () => {
+  // A room has no front, so its top view stands south of it looking north,
+  // and a picture of it reads like the plan rather than upside down.
+  const scene = check({
+    stage: '0.1',
+    name: 'top',
+    units: 'm',
+    levels: [{ id: 'ground', elevation: 0, height: 2.7 }],
+    rooms: [{ id: 'room', level: 'ground', name: 'Room', floor: [[0, 0], [6, 0], [6, 4], [0, 4]] }],
+  }).scene!
+  const top = frameCamera(scene, 'object:room:top')!
+  assert.ok(top.at![1] < top.look![1], `stands south of the middle: ${top.at} looking at ${top.look}`)
+  assert.ok(Math.abs(top.at![0] - top.look![0]) < 0.01, `not off to one side: ${top.at}`)
+  assert.ok(top.at![2] > 2, `above: ${top.at}`)
+})

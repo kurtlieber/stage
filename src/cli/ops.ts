@@ -67,7 +67,7 @@ export async function checkScene(path: string, store: SceneStore = PATHS): Promi
 // validated alone first, and nothing is written if it is malformed;
 // problems with the scene as a whole are written and reported, so an agent
 // can build up a scene in any order.
-export async function upsert(path: string, collection: Collection, entity: unknown, store: SceneStore = PATHS): Promise<{ replaced: boolean; result: CheckResult }> {
+export async function upsert(path: string, collection: Collection, entity: unknown, store: SceneStore = PATHS, note?: string): Promise<{ replaced: boolean; result: CheckResult }> {
   const parsed = SCHEMAS[collection].safeParse(entity)
   if (!parsed.success) {
     throw new Error(`not a valid ${collection.slice(0, -1)}: ${parsed.error.issues.map((i) => `${i.path.join('.') || '(entity)'}: ${i.message}`).join('; ')}`)
@@ -79,11 +79,11 @@ export async function upsert(path: string, collection: Collection, entity: unkno
     if (index >= 0) list[index] = entity
     else list.push(entity)
     return { replaced: index >= 0, raw }
-  })
+  }, note ?? `set ${collection} ${(entity as { id: string }).id}`)
   return { replaced, result: check(raw) }
 }
 
-export async function removeEntity(path: string, id: string, store: SceneStore = PATHS): Promise<{ collection: string; result: CheckResult }> {
+export async function removeEntity(path: string, id: string, store: SceneStore = PATHS, note?: string): Promise<{ collection: string; result: CheckResult }> {
   const { collection, raw } = await store.mutate(path, (raw) => {
     for (const collection of ['items', 'objects', 'openings', 'rooms', 'cameras', 'lights', 'materials', 'levels']) {
       const list = raw[collection]
@@ -94,7 +94,7 @@ export async function removeEntity(path: string, id: string, store: SceneStore =
       return { collection, raw }
     }
     throw new Error(`nothing in ${path} has the id "${id}"`)
-  })
+  }, note ?? `removed ${id}`)
   return { collection, result: check(raw) }
 }
 

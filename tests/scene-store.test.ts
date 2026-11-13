@@ -11,11 +11,13 @@ import { format } from '../src/core/store.ts'
 const temp = () => mkdtemp(join(tmpdir(), 'stage-store-'))
 const scene = (name = 'Test') => ({ version: 1, name, items: [] })
 
-// Every file under a folder, relative to it.
+// Every file under a folder, relative to it, leaving out each scene's
+// history (tests/history.test.ts covers that).
 async function files(root: string): Promise<string[]> {
   const found: string[] = []
   for (const entry of await readdir(root, { withFileTypes: true, recursive: true })) {
-    if (entry.isFile()) found.push(join(entry.parentPath, entry.name).slice(root.length + 1))
+    const path = join(entry.parentPath, entry.name).slice(root.length + 1)
+    if (entry.isFile() && !/^[^/]+\/[^/]+\/history\//.test(path)) found.push(path)
   }
   return found.sort()
 }
@@ -76,6 +78,7 @@ test('writers to one scene take turns, so every change lands', async () => {
   assert.equal(items.length, 20)
   assert.deepEqual(new Set(items.map((item) => item.id)).size, 20)
   assert.deepEqual(await files(root), ['house/main/scene.json'])
+  assert.equal((await store.history('house/main')).current, 21)
 })
 
 test('a change that throws writes nothing, and the next one still runs', async () => {
@@ -96,6 +99,7 @@ test('a change that throws writes nothing, and the next one still runs', async (
   })
   assert.equal(((await store.read('house/main')) as { name: string }).name, 'After')
   assert.deepEqual(await files(root), ['house/main/scene.json'])
+  assert.equal((await store.history('house/main')).current, 2, 'the change that threw is no version')
 })
 
 test('a store refuses a scene file that holds no JSON object', async () => {
@@ -162,6 +166,10 @@ test('the scene operations work on a named store', async () => {
   assert.equal((await removeEntity('house/main', 'desk', store)).collection, 'items')
   await assert.rejects(removeEntity('house/main', 'desk', store), /nothing in house\/main has the id "desk"/)
   assert.deepEqual(await files(root), ['house/main/scene.json'])
+  assert.deepEqual(
+    (await store.history('house/main')).versions.map((v) => v.change),
+    ['removed desk', 'set items desk', 'set items desk', 'created'],
+  )
 })
 
 test('remove finds objects and materials too', async () => {

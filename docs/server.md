@@ -34,10 +34,57 @@ The tools are the ones in [mcp.md](mcp.md), with these differences:
   server's own disk.
 
 The viewer serves a scene by name too, at `/?scene=house/main`, and
-refuses absolute paths.
+refuses absolute paths. When the server holds more than one scene, the
+top bar has a picker that opens any of them; `/api/scenes` lists them.
 
 Two writes to one scene take turns, so an agent that sends several `set`
 calls at once loses none of them. Every write replaces the file whole.
+
+## History
+
+Every write through the server keeps the scene it replaces. A scene's
+folder holds:
+
+```text
+house/main/
+├── scene.json          the current version
+├── history/
+│   ├── log.json        every version: number, time, what changed
+│   ├── 1.json          each earlier version, whole
+│   └── 2.json
+├── plans/              files the scene refers to
+└── exports/
+```
+
+| Tool | Does |
+| --- | --- |
+| `history` | The versions of a scene, newest first, with what changed |
+| `undo` | Back to the version before; again goes one further |
+| `restore` | Any earlier version back |
+
+Undo and restore write the earlier scene as a new version, so the
+versions after it stay and can be restored in turn. A write that leaves
+the text as it was is not a new version. `set`, `remove`, and
+`write_scene` take an optional `note` that the history shows beside the
+change. A scene written by hand, or from before history was kept, starts
+as version 1 as it stands. History is never pruned: each version is one
+scene file, a few kilobytes to a few hundred.
+
+## Variants
+
+A project's variants are its scenes: `house/main` and
+`house/open-kitchen` are two variants of `house`.
+
+| Tool | Does |
+| --- | --- |
+| `variants` | A project's variants, each with its version and last change |
+| `create_variant` | Copy a scene into a new variant, with the files beside it but not its history or exports |
+| `delete_variant` | Move a variant to `<root>/.deleted/`; the last one of a project is refused |
+| `compare` | Every difference between two scenes, and both rendered side by side |
+
+`compare` frames the room every difference is in from above, north
+up (`object:<room>:top`), or the whole plan when they span rooms; any
+`render` camera can be given instead.
 
 ## Settings
 

@@ -40,7 +40,7 @@
   ],
   "scripts": {
     "build": "vite build",
-    "test": "node --no-warnings --test tests/core.test.ts tests/scene-store.test.ts tests/http.test.ts",
+    "test": "node --no-warnings --test tests/core.test.ts tests/scene-store.test.ts tests/history.test.ts tests/calibrate.test.ts tests/assets-lock.test.ts tests/http.test.ts",
     "typecheck": "tsc --noEmit",
     "test:render": "node --no-warnings --test tests/render.test.ts",
     "prepare": "vite build"
