@@ -103,6 +103,8 @@ test('writes are atomic and leave nothing behind', async () => {
 
 test('asset search needs every word to match', () => {
   assert.equal(searchAssets('dining chair').map((a) => a.id)[0], 'chair/dining', 'the curated chair comes first')
+  assert.equal(searchAssets('credenza').map((a) => a.id)[0], 'cabinet/credenza')
+  assert.ok(searchAssets('l-shaped desk').some((a) => a.id === 'table/desk-to-measure'), 'an L desk is built from the desk to measure')
   assert.ok(searchAssets('sofa').length >= 2)
   const small = searchAssets('chair', { maxSize: [0.5, 0.6, 1] })
   assert.ok(small.some((a) => a.id === 'chair/dining'))
