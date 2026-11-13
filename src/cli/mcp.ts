@@ -190,7 +190,8 @@ export function buildMcp(context: McpContext): McpServer {
   const { store } = context
   const named = store.named
   const sceneArg = named ? sceneName : scenePath
-  const server = new McpServer({ name: 'stage', version: VERSION }, { instructions: named ? NAMED_PREAMBLE + guide() : guide() })
+  const instructions = named ? NAMED_PREAMBLE + guide() : guide()
+  const server = new McpServer({ name: 'stage', version: VERSION }, { instructions })
   const categories = [...new Set(ASSETS.map((a) => a.category))].sort()
   const starts = `"empty" is the ground and the sun with nothing on it, for a thing built from objects; "room" is one 4 × 3 m room with a door, for a building; the examples are ${EXAMPLE_NAMES.map((n) => `"${n}" (${EXAMPLE_BLURB[n]})`).join(', ')}`
   const newSceneOptions = { name: z.string().default('Untitled scene'), from: z.enum(['empty', 'room', ...EXAMPLE_NAMES]).default('empty') }
@@ -199,6 +200,21 @@ export function buildMcp(context: McpContext): McpServer {
   const files = store instanceof FileSceneStore ? store : undefined
   // Only a store with history keeps a note, so only it asks for one.
   const noteArg = (files ? { note: z.string().max(200).optional().describe('A few words on why, for the history, like "desk under the window"') } : {}) as { note: z.ZodOptional<z.ZodString> }
+
+  // The instructions again, as a tool. Some clients (claude.ai among them)
+  // never show the model a server's instructions or its resources, and a
+  // tool's result is the one thing every client passes on. Registered
+  // first, so it lists first.
+  server.registerTool(
+    'guide',
+    {
+      title: 'Read first: how Stage works',
+      description: 'Stage is the 3D scene tool behind these tools: rooms, floors, furniture and objects, kept as scene files and rendered as images. Call this once, before any other Stage tool, unless the Stage guide is already in your context. It returns the guide: the scene format, the order of work, and how this server keeps its scenes.',
+      inputSchema: {},
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    () => guarded(async () => [text(instructions)]),
+  )
 
   if (named) {
     server.registerTool(
@@ -215,7 +231,7 @@ export function buildMcp(context: McpContext): McpServer {
       'scenes',
       {
         title: 'List the scenes',
-        description: 'Every scene on this server, by name (project/variant).',
+        description: 'Every Stage scene on this server, by name (project/variant).',
         inputSchema: {},
         annotations: { readOnlyHint: true, openWorldHint: false },
       },
@@ -546,7 +562,7 @@ export function buildMcp(context: McpContext): McpServer {
     'schema',
     {
       title: 'The scene format',
-      description: 'The scene format as JSON Schema: the whole file, or one collection\'s entity. Ask for it when a field is in doubt; the guide in the server instructions covers the common cases.',
+      description: 'The scene format as JSON Schema: the whole file, or one collection\'s entity. Ask for it when a field is in doubt; the guide (the guide tool, or the server instructions) covers the common cases.',
       inputSchema: { collection: z.enum(COLLECTIONS).optional() },
       annotations: { readOnlyHint: true, openWorldHint: false },
     },

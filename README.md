@@ -73,8 +73,9 @@ open it in my browser." Or: "Start a scene from the two-storey example,
 open it, and move the sofa under the window." The agent sees every render
 it asks for; you see every change in your browser as it lands.
 
-The server carries its own guide, so an agent that has never seen Stage
-knows the format and the order of work before its first call: a group and
+The server carries its own guide, as its instructions and as a `guide`
+tool for clients that drop instructions, so an agent that has never seen
+Stage knows the format and the order of work before it starts: a group and
 its parts for a thing, rooms then openings then furniture for a building,
 looking at a render after each step. The tools say what they are for,
 `query` and `check` answer in words that name the entity and the fix, and

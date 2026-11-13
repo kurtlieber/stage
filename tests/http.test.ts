@@ -69,7 +69,7 @@ async function allFiles(folder: string): Promise<string[]> {
 test('no tool takes a file path, and every scene argument must be a name', async () => {
   const { tools } = await client.listTools()
   const names = tools.map((t) => t.name)
-  for (const expected of ['new_scene', 'scenes', 'open_viewer', 'show', 'check', 'render', 'query', 'read_scene', 'set', 'remove', 'write_scene', 'export', 'fetch_model', 'history', 'undo', 'restore', 'variants', 'create_variant', 'delete_variant', 'compare', 'calibrate_plan']) assert.ok(names.includes(expected), expected)
+  for (const expected of ['guide', 'new_scene', 'scenes', 'open_viewer', 'show', 'check', 'render', 'query', 'read_scene', 'set', 'remove', 'write_scene', 'export', 'fetch_model', 'history', 'undo', 'restore', 'variants', 'create_variant', 'delete_variant', 'compare', 'calibrate_plan']) assert.ok(names.includes(expected), expected)
   for (const tool of tools) {
     const properties = (tool.inputSchema.properties ?? {}) as Record<string, { pattern?: string; type?: string }>
     for (const forbidden of ['path', 'out', 'file', 'plan', 'image']) assert.ok(!(forbidden in properties), `${tool.name} takes "${forbidden}"`)
@@ -79,6 +79,23 @@ test('no tool takes a file path, and every scene argument must be a name', async
   const { prompts } = await client.listPrompts()
   assert.ok(!prompts.some((p) => p.name === 'from-floor-plan'), 'the floor plan prompt needs a local file')
   assert.match(client.getInstructions() ?? '', /^# This Stage server/)
+})
+
+// claude.ai never shows the model a server's instructions or its resources;
+// a tool's result is the one thing every client passes on.
+test('the guide is also a tool, listed first, that returns the instructions word for word', async () => {
+  const { tools } = await client.listTools()
+  const tool = tools[0]
+  assert.equal(tool.name, 'guide')
+  assert.deepEqual(tool.inputSchema.properties ?? {}, {})
+  assert.equal(tool.annotations?.readOnlyHint, true)
+  assert.match(tool.description ?? '', /Stage/)
+  assert.match(tool.description ?? '', /before any other/)
+  const reply = await call('guide', {})
+  assert.equal(reply.isError, false)
+  assert.equal(reply.text, client.getInstructions())
+  assert.match(reply.text, /^# This Stage server/)
+  assert.ok(reply.text.length > 5000, `only ${reply.text.length} characters`)
 })
 
 test('a scene is built by name over HTTP', async () => {
@@ -305,6 +322,10 @@ test('the local server keeps file paths, as before', async () => {
     assert.equal(byName.get('set')!.scene.pattern, undefined)
     assert.ok((await local.listPrompts()).prompts.some((p) => p.name === 'from-floor-plan'))
     assert.doesNotMatch(local.getInstructions() ?? '', /^# This Stage server/)
+    assert.equal(tools[0].name, 'guide')
+    const guide = (await local.callTool({ name: 'guide', arguments: {} })) as { content: { text: string }[]; isError?: boolean }
+    assert.ok(!guide.isError)
+    assert.equal(guide.content[0].text, local.getInstructions())
 
     const folder = await mkdtemp(join(tmpdir(), 'stage-local-'))
     const reply = (await local.callTool({ name: 'new_scene', arguments: { path: join(folder, 'flat'), from: 'room' } })) as { content: { text: string }[]; isError?: boolean }
