@@ -149,25 +149,37 @@ export function roomElevation(scene: Scene, room: Room): number {
   return levelOf(scene, room)?.elevation ?? 0
 }
 
+// The next level up that stands over this one. A grade level is a split
+// level beside the storey on the ground, a few steps up or down, so it is
+// never the floor above anything.
+export function levelAbove(scene: Scene, level: Level): Level | undefined {
+  const ordered = levelsByElevation(scene)
+  return ordered.slice(ordered.indexOf(level) + 1).find((l) => !l.grade)
+}
+
 // The slab a room's walls rise through above its ceiling: the floor slab
 // of the next level up, or this level's own when it is the top.
 export function slabAbove(scene: Scene, room: Room): number {
   const level = levelOf(scene, room)
   if (!level) return 0
-  const ordered = levelsByElevation(scene)
-  const above = ordered[ordered.indexOf(level) + 1]
-  return above?.slab ?? level.slab
+  return levelAbove(scene, level)?.slab ?? level.slab
 }
 
-// Where a room's walls start: on the lowest level, down at the ground, so
-// a house on a plinth stands on it rather than floating.
+// Whether a room stands on the ground: it is on the lowest level with a
+// closed room (a site level of gardens and drives below doesn't count), or
+// on a grade level.
+export function onGround(scene: Scene, room: Room): boolean {
+  if (levelOf(scene, room)?.grade) return true
+  const lowest = levelsByElevation(scene).find((level) => scene.rooms.some((r) => !r.open && r.level === level.id))
+  return lowest?.id === room.level
+}
+
+// Where a room's walls start: down at the ground for a room that stands on
+// it, so a house on a plinth, or a wing a few steps up, doesn't float.
 export function wallBottom(scene: Scene, room: Room): number {
   const elevation = roomElevation(scene, room)
   if (room.open) return elevation
-  // The lowest level with a closed room on it: a site level of gardens
-  // and drives below doesn't count.
-  const lowest = levelsByElevation(scene).find((level) => scene.rooms.some((r) => !r.open && r.level === level.id))
-  return lowest?.id === room.level && elevation > 0 ? 0 : elevation
+  return onGround(scene, room) && elevation > 0 ? 0 : elevation
 }
 
 export function wallTop(scene: Scene, room: Room): number {

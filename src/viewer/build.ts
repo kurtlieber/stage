@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { alongWall, area, bounds, centroid, distanceToSegment, levelsByElevation, pointInPolygon, roomElevation, roomHeight, wallAngle, wallPieces, walls, type Point, type Wall } from '../core/geometry.ts'
+import { alongWall, area, bounds, centroid, distanceToSegment, levelsByElevation, onGround, pointInPolygon, roomElevation, roomHeight, wallAngle, wallPieces, walls, type Point, type Wall } from '../core/geometry.ts'
 import { FIXTURES, findAsset } from '../core/assets.ts'
 import { DEFAULT_MATERIALS, MATERIALS, materialSpec } from '../core/materials.ts'
 import { placeObjects } from '../core/objects.ts'
@@ -152,7 +152,9 @@ export function buildScene(scene: Scene, options: BuildOptions = {}): Built {
     const level = levels.find((l) => l.id === room.level)
     const shape = floorShape(room.floor)
     if (!room.well) {
-      const slab = room.level === lowest || elevation <= 0.05 ? 0 : (level?.slab ?? 0)
+      // A floor that stands on the ground above it is solid down to it: a
+      // porch a few steps up, a raised wing.
+      const slab = elevation <= 0.05 ? 0 : onGround(scene, room) ? elevation : room.level === lowest ? 0 : (level?.slab ?? 0)
       const finish = floorMaterial(room.materials?.floor, room.open ? DEFAULT_MATERIALS.ground : DEFAULT_MATERIALS.floor)
       if (slab > 0) {
         // Upper floors are slabs: a terrace over a porch has an underside
