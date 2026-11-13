@@ -36,6 +36,9 @@ The tools are the ones in [mcp.md](mcp.md), with these differences:
 The viewer serves a scene by name too, at `/?scene=house/main`, and
 refuses absolute paths. When the server holds more than one scene, the
 top bar has a picker that opens any of them; `/api/scenes` lists them.
+The bare address, `/` with no scene, redirects to the first scene whose
+variant is `main`, or else to the first scene. With no scenes at all it
+says so.
 
 Two writes to one scene take turns, so an agent that sends several `set`
 calls at once loses none of them. Every write replaces the file whole.
