@@ -194,3 +194,55 @@ body.locked .bottom, body.locked .hint, body.locked .room-panel { display: none;
   .room-panel { max-height: calc(100vh - 76px - 9rem); }
 }
 .room-panel .units { display: flex; gap: 2px; margin-top: 14px; padding: 3px; width: fit-content; border-radius: 8px; background: rgba(255, 255, 255, 0.06); }
+
+/* Plan mode's floor plan: over the canvas, under the controls. Ink on
+   paper, as an architect draws one; fixtures and low walls lighter, still
+   3:1 on the floor. */
+.plan-sheet {
+  --paper: #f6f4ef;
+  --ink: #26262a;
+  --fixture: #85817a;
+  --low-wall: #8a867f;
+  --model: var(--ink);
+  position: fixed; inset: 0; width: 100vw; height: 100vh;
+  pointer-events: none; opacity: 0; visibility: hidden;
+}
+.plan-sheet.shown { opacity: 1; visibility: visible; transition: opacity 160ms ease-out; }
+@media (prefers-reduced-motion: reduce) { .plan-sheet.shown { transition: none; } }
+.plan-sheet .paper { fill: var(--paper); }
+.plan-sheet .model path { vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+.plan-sheet .floors .room { fill: #fff; }
+.plan-sheet .floors .open { fill: #eceae4; stroke: var(--fixture); stroke-width: 1; }
+.plan-sheet .floors .well { fill: var(--paper); }
+.plan-sheet .mark { fill: var(--accent); fill-opacity: 0.3; }
+.plan-sheet .walls .cut { fill: var(--model); }
+.plan-sheet .walls .low { fill: var(--low-wall); }
+.plan-sheet .furniture, .plan-sheet .tread { fill: none; stroke: var(--fixture); stroke-width: 1; }
+.plan-sheet .above { fill: none; stroke: var(--fixture); stroke-width: 1; stroke-dasharray: 4 3; }
+.plan-sheet .void { fill: none; stroke: var(--low-wall); stroke-width: 1; stroke-dasharray: 6 4; }
+.plan-sheet .frame, .plan-sheet .panel { fill: #fff; stroke: var(--model); stroke-width: 1; }
+.plan-sheet .glass { fill: none; stroke: var(--model); stroke-width: 1; }
+.plan-sheet .leaf { fill: none; stroke: var(--model); stroke-width: 1.5; }
+.plan-sheet .swing { fill: none; stroke: var(--model); stroke-width: 0.75; }
+.plan-sheet text {
+  font: 0.93rem/1 system-ui, -apple-system, 'Segoe UI', sans-serif;
+  text-anchor: middle; fill: var(--ink);
+  paint-order: stroke; stroke: #fff; stroke-width: 3px; stroke-linejoin: round;
+}
+.plan-sheet .labels .name { font-weight: 600; }
+.plan-sheet .labels .area { font-size: 0.86rem; fill: #57544f; font-variant-numeric: tabular-nums; }
+.plan-sheet .labels .current .name { font-weight: 700; }
+.plan-sheet .dimensions .line { fill: none; stroke: var(--ink); stroke-width: 1; }
+.plan-sheet .dimensions text { font-size: 0.86rem; dominant-baseline: central; font-variant-numeric: tabular-nums; }
+/* With the drawing under it the model goes blue, its walls see-through,
+   so the two read apart where they disagree: lines 6:1 and walls 3:1 on
+   the drawing's paper. The drawing names its own rooms. */
+.plan-sheet:not(.drawing) .drawings { display: none; }
+.plan-sheet.drawing { --model: #1d4ed8; --fixture: var(--model); --low-wall: var(--model); }
+.plan-sheet.drawing .floors path { fill: none; }
+.plan-sheet.drawing .walls path { fill-opacity: 0.65; }
+.plan-sheet.drawing .frame, .plan-sheet.drawing .panel { fill: none; }
+.plan-sheet.drawing .labels text:not(.current) { display: none; }
+
+body[data-mode='plan'] canvas#view { cursor: grab; touch-action: none; }
+body.panning canvas#view { cursor: grabbing; }

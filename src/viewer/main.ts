@@ -8,6 +8,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js'
 import { findAsset } from '../core/assets.ts'
 import { check, type Problem } from '../core/check.ts'
 import { findCamera } from '../core/cameras.ts'
+import { floorPlan } from '../core/floor-plan.ts'
 import { bounds, centroid, levelsByElevation, pointInPolygon, roomElevation, roomHeight, sceneBounds, storeys, type Point } from '../core/geometry.ts'
 import { STEP, ground, obstacles, resolve as resolveWalk, type Obstacles } from '../core/walk.ts'
 import { SKY } from '../core/materials.ts'
@@ -18,6 +19,7 @@ import { applyCutaway, buildScene, floorMaterial, toWorld, type Built } from './
 import { useSurfaces } from './furniture.ts'
 import { loadLibrary, loadSky, progress, settled, type Sky } from './library.ts'
 import { applyRoomMode, leaveRoomMode, type Walls } from './room-mode.ts'
+import { PlanSheet, type Drawing } from './plan-sheet.ts'
 import { renderRoomPanel } from './room-panel.ts'
 import { speckle } from './textures.ts'
 
@@ -240,6 +242,14 @@ let currentRoom: string | undefined
 // mode opens the near walls, and the units every number is printed in.
 let walls: Walls = setting('walls', ['low', 'glass'], 'low')
 let units: Units = setting('units', ['m', 'ft'], 'm')
+// Whether Plan mode shows the drawing under the floor plan.
+let drawing = setting('drawing', ['off', 'on'], 'off')
+// Where the person has moved the plan to and how far in; none, fitted.
+let planPan: { x: number; y: number; zoom: number } | undefined
+// The floor plan over the canvas in Plan mode, and the scene and storey it
+// was drawn for. A headless render keeps the 3D plan.
+const sheet = headless ? undefined : new PlanSheet(canvas, (missing) => setStatus(missingDrawing(missing)))
+let sheetFor: { scene?: Scene; storey: number; fileUrl?: (relative: string) => string } = { storey: -1 }
 // The camera's move from one view to the next.
 let flight: { from: THREE.Vector3; to: THREE.Vector3; fromTarget: THREE.Vector3; toTarget: THREE.Vector3; fromFov: number; toFov: number; start: number } | undefined
 // Whether the first view is up, so later moves fly to the next one.
@@ -263,6 +273,8 @@ function keepSetting(name: string, value: string) {
 function resize() {
   const width = headless ? Number(params.get('w') ?? 1280) : window.innerWidth
   const height = headless ? Number(params.get('h') ?? 720) : window.innerHeight
+  viewWidth = width
+  viewHeight = height
   renderer.setSize(width, height, !headless)
   composer.setPixelRatio(renderer.getPixelRatio())
   composer.setSize(width, height)
@@ -271,6 +283,8 @@ function resize() {
   fitPlan()
 }
 window.addEventListener('resize', resize)
+let viewWidth = 1
+let viewHeight = 1
 
 function fitPlan() {
   if (!scene) return
@@ -290,12 +304,69 @@ function fitPlan() {
   plan.bottom = -halfH
   // Just above the level's ceiling; the levels above are hidden anyway.
   const top = level ? level.elevation + level.height + 3 : 50
-  plan.position.copy(toWorld([cx, cy], top))
+  const [x, y, zoom] = planPan ? [planPan.x, planPan.y, planPan.zoom] : fittedPlan(cx, cy, halfW, b)
+  plan.zoom = zoom
+  plan.position.copy(toWorld([x, y], top))
   plan.near = 0.1
   plan.far = top + 20
   plan.up.set(0, 0, -1)
-  plan.lookAt(toWorld([cx, cy], 0))
+  plan.lookAt(toWorld([x, y], 0))
   plan.updateProjectionMatrix()
+}
+
+// The fitted plan sits in the part of the screen the panels leave free:
+// right of the menu, left of the room panel (kept free before a room is
+// picked, so picking one covers nothing), between the top bar and the hint.
+// The whole screen when that leaves too little, and in a headless render.
+function fittedPlan(cx: number, cy: number, halfW: number, b: { min: number[]; max: number[] }): [number, number, number] {
+  if (headless) return [cx, cy, 1]
+  const sidebar = $('sidebar').getBoundingClientRect()
+  const panel = getComputedStyle($('room-panel'))
+  const hint = $('mode-hint').getBoundingClientRect()
+  const left = sidebar.width ? sidebar.right + 8 : 0
+  const right = viewWidth - (parseFloat(panel.width) || 0) - (parseFloat(panel.right) || 0) - 8
+  const top = $('modes').getBoundingClientRect().bottom + 8
+  const bottom = hint.height ? hint.top - 8 : viewHeight
+  if (right - left < viewWidth / 2 || bottom - top < viewHeight / 2) return [cx, cy, 1]
+  const margin = 1
+  const scale = Math.min((right - left) / (b.max[0] - b.min[0] + 2 * margin), (bottom - top) / (b.max[1] - b.min[1] + 2 * margin))
+  const whole = viewWidth / (2 * halfW)
+  return [cx - ((left + right) / 2 - viewWidth / 2) / scale, cy + ((top + bottom) / 2 - viewHeight / 2) / scale, scale / whole]
+}
+
+// Moving over the plan: by dragging, the arrow keys, or zooming toward the
+// pointer. The middle stays over the house, and the zoom goes from half
+// the fitted plan to a centimeter a few pixels wide.
+const planScale = () => (viewWidth * plan.zoom) / (plan.right - plan.left)
+function movePlan(x: number, y: number, zoom: number) {
+  if (!scene) return
+  const b = sceneBounds(scene)
+  const fitted = viewWidth / (plan.right - plan.left)
+  planPan = {
+    x: THREE.MathUtils.clamp(x, b.min[0], b.max[0]),
+    y: THREE.MathUtils.clamp(y, b.min[1], b.max[1]),
+    zoom: THREE.MathUtils.clamp(zoom, 0.5, Math.max(1, 600 / fitted)),
+  }
+  fitPlan()
+}
+function zoomPlan(factor: number, at?: { x: number; y: number }) {
+  const s = planScale()
+  const rect = canvas.getBoundingClientRect()
+  // The plan point under the pointer stays under it.
+  const dx = at ? at.x - rect.left - rect.width / 2 : 0
+  const dy = at ? at.y - rect.top - rect.height / 2 : 0
+  const x = plan.position.x + dx / s
+  const y = -plan.position.z - dy / s
+  movePlan(x, y, plan.zoom * factor)
+  const s2 = planScale()
+  movePlan(x - dx / s2, y + dy / s2, plan.zoom)
+}
+function keyPan(delta: number) {
+  const right = (keys.has('ArrowRight') ? 1 : 0) - (keys.has('ArrowLeft') ? 1 : 0)
+  const up = (keys.has('ArrowUp') ? 1 : 0) - (keys.has('ArrowDown') ? 1 : 0)
+  if (right === 0 && up === 0) return
+  const step = (600 * delta) / planScale()
+  movePlan(plan.position.x + right * step, -plan.position.z + up * step, plan.zoom)
 }
 
 // Hides everything on levels above the cap, and shows the plan drawing
@@ -468,6 +539,7 @@ function useCamera(id: string) {
     view = 'plan'
     planLevel = wanted ?? (cap === Infinity ? levels.length - 1 : Math.min(cap, levels.length - 1))
     cap = planLevel >= levels.length - 1 ? Infinity : planLevel
+    planPan = undefined
     fitPlan()
     applyView('plan', planLabel())
     return
@@ -614,7 +686,7 @@ function showCurrentRoom() {
 function pickRoom(id: string) {
   setCurrentRoom(id)
   const index = levelIndexOf(scene?.rooms.find((r) => r.id === id)?.level)
-  if (view === 'plan' && index !== undefined && storeyOf(index) !== storeyOf(planLevel)) useCamera(`plan:${levels[index].id}`)
+  if (view === 'plan' && index !== undefined && storeyOf(index) !== storeyOf(planLevel)) setCap(index)
 }
 
 // Going to a room, from the list, a door in the room panel, previous and
@@ -721,7 +793,7 @@ function setUnits(next: Units) {
 // One line on how to get around in the mode the person is in. Room mode's
 // also holds the switch for its walls.
 const HINTS: Record<Mode, string> = {
-  plan: 'Click a room to pick it, double-click to open it · <kbd>[</kbd> <kbd>]</kbd> level down or up · <kbd>N</kbd> <kbd>B</kbd> next or previous room',
+  plan: 'Click a room to pick it, double-click to open it · drag or arrow keys to pan · scroll or <kbd>+</kbd> <kbd>−</kbd> to zoom, <kbd>P</kbd> to fit · <kbd>[</kbd> <kbd>]</kbd> level down or up',
   house: 'Drag or arrow keys to circle · scroll or <kbd>+</kbd> <kbd>−</kbd> to zoom · click a room to pick it, double-click to open it',
   room: 'Drag or arrow keys to circle · scroll or <kbd>+</kbd> <kbd>−</kbd> to zoom · <kbd>N</kbd> <kbd>B</kbd> next or previous room',
   walk: '<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · drag or <kbd>←</kbd> <kbd>→</kbd> to turn · double-click to lock the mouse · <kbd>N</kbd> <kbd>B</kbd> next or previous room',
@@ -731,23 +803,66 @@ function showModeHint() {
   const hint = $('mode-hint')
   const refocus = hint.contains(document.activeElement)
   hint.innerHTML = HINTS[mode]
-  if (mode !== 'room') return
-  const group = document.createElement('span')
-  group.className = 'walls'
-  group.setAttribute('role', 'group')
-  group.setAttribute('aria-label', 'Walls')
-  group.append('Walls ')
-  for (const [value, text] of [['low', 'Low'], ['glass', 'Glass']] as const) {
-    const button = document.createElement('button')
-    button.type = 'button'
-    button.textContent = text
-    button.title = value === 'low' ? 'Near walls cut low (G)' : 'Near walls of glass (G)'
-    button.setAttribute('aria-pressed', String(walls === value))
-    button.addEventListener('click', () => setWalls(value))
-    group.append(button)
+  // A two-way switch: its name, then a button for each side.
+  const toggle = <T extends string>(name: string, choices: readonly (readonly [T, string, string])[], current: T, choose: (value: T) => void) => {
+    const group = document.createElement('span')
+    group.className = 'walls'
+    group.setAttribute('role', 'group')
+    group.setAttribute('aria-label', name)
+    group.append(`${name} `)
+    for (const [value, text, title] of choices) {
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.textContent = text
+      button.title = title
+      button.setAttribute('aria-pressed', String(current === value))
+      button.addEventListener('click', () => choose(value))
+      group.append(button)
+    }
+    hint.prepend(group, ' · ')
+    if (refocus) group.querySelector<HTMLElement>('[aria-pressed="true"]')?.focus()
   }
-  hint.prepend(group, ' · ')
-  if (refocus) group.querySelector<HTMLElement>('[aria-pressed="true"]')?.focus()
+  if (mode === 'room')
+    toggle('Walls', [['low', 'Low', 'Near walls cut low (G)'], ['glass', 'Glass', 'Near walls of glass (G)']] as const, walls, setWalls)
+  else if (mode === 'plan' && planDrawings().length > 0)
+    toggle('Drawing', [['off', 'Off', 'The floor plan alone (D)'], ['on', 'On', "The architects' drawing under the floor plan (D)"]] as const, drawing, setDrawing)
+}
+
+function setDrawing(next: 'off' | 'on') {
+  drawing = next
+  keepSetting('drawing', next)
+  showModeHint()
+  const missing = sheet?.missing[0]
+  setStatus(next === 'off' ? 'The floor plan alone.' : missing ? missingDrawing(missing) : 'The drawing shows under the floor plan.')
+}
+const missingDrawing = (missing: Drawing) => `Unable to load the drawing ${missing.image}. Check its path in the scene.`
+
+// The drawings of the plan's storey, its split levels' too.
+function planDrawings(): Drawing[] {
+  const storey = storeyOf(planLevel)
+  const fileUrl = sheetFor.fileUrl
+  if (!fileUrl) return []
+  return levels.flatMap((level, i) => (level.plan && storeyOf(i) === storey ? [{ image: level.plan.image, url: fileUrl(level.plan.image), scale: level.plan.scale, origin: level.plan.origin }] : []))
+}
+
+// Keeps the sheet on the plan: drawn for this storey, at this view, with
+// the current room. Cheap when nothing changed, so it runs every frame.
+function syncSheet(now: number) {
+  if (!sheet) return
+  const on = view === 'plan' && !!scene
+  sheet.show(on, now)
+  if (!on || !scene) return
+  const storey = storeyOf(planLevel)
+  if (sheetFor.scene !== scene || sheetFor.storey !== storey) {
+    sheetFor.scene = scene
+    sheetFor.storey = storey
+    const ids = levels.filter((_, i) => storeyOf(i) === storey).map((level) => level.id)
+    sheet.draw(scene, floorPlan(scene, ids), planDrawings())
+    showModeHint()
+  }
+  sheet.showDrawing(drawing === 'on')
+  sheet.setView({ x: plan.position.x, y: -plan.position.z, scale: planScale(), width: viewWidth, height: viewHeight })
+  sheet.setRoom(currentRoom, units, labelsOn)
 }
 
 function showHelp(show: boolean) {
@@ -770,6 +885,7 @@ function keyOrbit(delta: number) {
   perspective.position.copy(orbit.target).add(offset.setFromSpherical(spherical))
 }
 function zoomBy(factor: number) {
+  if (view === 'plan') return zoomPlan(1 / factor)
   if (!orbit.enabled || active !== perspective) return
   flight = undefined
   const offset = perspective.position.clone().sub(orbit.target)
@@ -949,6 +1065,10 @@ window.addEventListener('keydown', (event) => {
   else if (key === 'v') startWalk()
   else if (key === '4') setMode('walk')
   else if (key === 'g') setWalls(walls === 'low' ? 'glass' : 'low')
+  else if (key === 'd' && view === 'plan') {
+    if (planDrawings().length > 0) setDrawing(drawing === 'on' ? 'off' : 'on')
+    else setStatus('This level has no drawing.')
+  }
   else if (key === 'u') setUnits(units === 'm' ? 'ft' : 'm')
   else if (key === '[' || key === ']') setCap(Math.min(cap, levels.length - 1) + (key === ']' ? 1 : -1))
   else if (key === 'f') setQuality(quality === 'high' ? 'fast' : 'high', quality === 'high' ? 'Fast rendering: press F for high quality.' : 'High quality.')
@@ -1108,8 +1228,38 @@ let pressed: { x: number; y: number } | undefined
 canvas.addEventListener('pointerdown', (event) => {
   pressed = { x: event.clientX, y: event.clientY }
   flight = undefined
+  if (view !== 'plan' || (event.button !== 0 && event.button !== 1)) return
+  // Dragging moves the plan; the middle button, without scrolling the page.
+  if (event.button === 1) event.preventDefault()
+  panning = { id: event.pointerId, x: event.clientX, y: event.clientY }
+  canvas.setPointerCapture(event.pointerId)
 })
-canvas.addEventListener('wheel', () => (flight = undefined), { passive: true })
+let panning: { id: number; x: number; y: number } | undefined
+canvas.addEventListener('pointermove', (event) => {
+  if (!panning || event.pointerId !== panning.id || view !== 'plan') return
+  const s = planScale()
+  movePlan(plan.position.x - (event.clientX - panning.x) / s, -plan.position.z + (event.clientY - panning.y) / s, plan.zoom)
+  panning.x = event.clientX
+  panning.y = event.clientY
+  if (pressed && Math.hypot(event.clientX - pressed.x, event.clientY - pressed.y) > 5) document.body.classList.add('panning')
+})
+const endPan = (event: PointerEvent) => {
+  if (panning?.id !== event.pointerId) return
+  panning = undefined
+  document.body.classList.remove('panning')
+}
+canvas.addEventListener('pointerup', endPan)
+canvas.addEventListener('pointercancel', endPan)
+canvas.addEventListener(
+  'wheel',
+  (event) => {
+    flight = undefined
+    if (view !== 'plan') return
+    event.preventDefault()
+    zoomPlan(Math.exp(-event.deltaY * (event.deltaMode === 1 ? 0.05 : 0.0015)), { x: event.clientX, y: event.clientY })
+  },
+  { passive: false },
+)
 canvas.addEventListener('click', (event) => {
   if (!built || !scene || locked() || (dragging && dragging.moved > 6)) return
   // The end of a drag that circled the house is not a click.
@@ -1265,7 +1415,9 @@ async function load(first: boolean): Promise<void> {
   storeyIndex = storeys(next)
   if (cap !== Infinity && cap >= levels.length - 1) cap = Infinity
   planLevel = Math.min(planLevel, levels.length - 1)
-  built = buildScene(next, { fileUrl: (relative) => (bundled ? `./files/${relative}` : `./files/${btoa(unescape(encodeURIComponent(scenePath))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')}/${relative.split('/').map(encodeURIComponent).join('/')}`) })
+  const fileUrl = (relative: string) => (bundled ? `./files/${relative}` : `./files/${btoa(unescape(encodeURIComponent(scenePath))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')}/${relative.split('/').map(encodeURIComponent).join('/')}`)
+  sheetFor.fileUrl = fileUrl
+  built = buildScene(next, { fileUrl })
   world.add(built.root)
   shadowsChanged()
   // Compile every shader now, so the first turn of the head doesn't stall.
@@ -1426,7 +1578,7 @@ function frame() {
   } else if (orbit.enabled) {
     keyOrbit(delta)
     orbit.update()
-  }
+  } else if (view === 'plan') keyPan(delta)
   for (let i = highlights.length - 1; i >= 0; i--) {
     const h = highlights[i]
     if (now > h.until) {
@@ -1451,6 +1603,9 @@ function frame() {
     stillSince = now
   }
   const still = headless || now - stillSince > 200
+  syncSheet(now)
+  // Under the sheet, once it has faded in, there is nothing to draw.
+  if (view === 'plan' && sheet?.covers(now)) return
   if (quality === 'high' && active === perspective && still) {
     renderPass.camera = perspective
     ao.camera = perspective
