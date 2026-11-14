@@ -564,7 +564,7 @@ function buildWall(wall: Wall, rooms: Map<string, Scene['rooms'][number]>, floor
   const closedLeft = leftRoom && !rooms.get(leftRoom)?.open
   const closedRight = rightRoom && !rooms.get(rightRoom)?.open
   const outward: Point | undefined = closedLeft && closedRight ? undefined : closedLeft ? [-normal[0], -normal[1]] : [normal[0], normal[1]]
-  group.userData.wall = { a: wall.a, b: wall.b, half: wall.thickness / 2, base: wall.elevation, height: wall.height, outward: wall.exterior || !closedLeft || !closedRight ? outward : undefined } satisfies WallInfo
+  group.userData.wall = { a: wall.a, b: wall.b, half: wall.thickness / 2, base: wall.elevation, height: wall.height, outward: wall.exterior || !closedLeft || !closedRight ? outward : undefined, rooms: wall.rooms } satisfies WallInfo
 
   for (const piece of wallPieces(wall)) {
     // Pieces at either end of the wall reach half a thickness past it, so
@@ -615,6 +615,8 @@ interface WallInfo {
   base: number
   height: number
   outward?: Point
+  // The rooms the wall bounds, for Room mode.
+  rooms: string[]
 }
 
 // Gets walls out of the camera's way, by where the camera is rather than
