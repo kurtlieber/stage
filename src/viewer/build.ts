@@ -565,6 +565,8 @@ function buildWall(wall: Wall, rooms: Map<string, Scene['rooms'][number]>, floor
   const closedRight = rightRoom && !rooms.get(rightRoom)?.open
   const outward: Point | undefined = closedLeft && closedRight ? undefined : closedLeft ? [-normal[0], -normal[1]] : [normal[0], normal[1]]
   group.userData.wall = { a: wall.a, b: wall.b, half: wall.thickness / 2, base: wall.elevation, height: wall.height, outward: wall.exterior || !closedLeft || !closedRight ? outward : undefined } satisfies WallInfo
+  // PROTOTYPE (dotfiles#664): which rooms the wall bounds, for Room mode.
+  group.userData.rooms = wall.rooms
 
   for (const piece of wallPieces(wall)) {
     // Pieces at either end of the wall reach half a thickness past it, so

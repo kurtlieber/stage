@@ -157,3 +157,10 @@ body.locked .bottom, body.locked .hint { display: none; }
 .loading { position: absolute; top: 0; left: 0; right: 0; height: 4px; background: rgba(0, 0, 0, 0.25); }
 .loading .progress { height: 100%; background: var(--accent); transition: width 0.2s; }
 .loading .progress-label { position: absolute; top: 8px; right: 16px; font-size: 12px; color: var(--muted); background: var(--panel); padding: 3px 8px; border-radius: 6px; }
+
+/* PROTOTYPE (dotfiles#664): the variant switcher, plainly not part of the design. */
+.proto-switcher { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 50; display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 999px; background: #ff3d7f; color: #fff; font: 600 14px/1 system-ui, sans-serif; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35); }
+.proto-switcher button { border: 0; border-radius: 999px; width: 32px; height: 32px; background: rgba(255, 255, 255, 0.22); color: #fff; font: inherit; font-size: 16px; cursor: pointer; }
+.proto-switcher button:hover { background: rgba(255, 255, 255, 0.36); }
+.proto-switcher button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.proto-switcher span { min-width: 220px; text-align: center; }

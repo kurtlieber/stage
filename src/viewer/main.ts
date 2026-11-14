@@ -16,6 +16,7 @@ import { applyCutaway, buildScene, floorMaterial, toWorld, type Built } from './
 import { useSurfaces } from './furniture.ts'
 import { loadLibrary, loadSky, progress, settled, type Sky } from './library.ts'
 import { speckle } from './textures.ts'
+import { applyRoomMode, leaveRoomMode, variantSwitcher, VARIANTS, type Variant } from './prototype-room.ts'
 
 // The viewer. The same page serves a person in a browser and the command
 // line's headless renders (?headless), so the agent and the person always
@@ -204,7 +205,7 @@ function alignSky() {
   world.backgroundRotation.y = turn
 }
 
-type View = 'orbit' | 'plan' | 'camera' | 'walk' | 'focus'
+type View = 'orbit' | 'plan' | 'camera' | 'walk' | 'focus' | 'room'
 let view: View = 'orbit'
 let scene: Scene | undefined
 // Levels from the lowest up, and the highest one shown: everything above
@@ -220,6 +221,11 @@ const highlights: { helper: THREE.BoxHelper; until: number }[] = []
 let labelsOn = true
 let selected: string | undefined
 let lastUpdate = 0
+// PROTOTYPE (dotfiles#664 step 1): Room mode, its variant, and the camera's
+// flight from one view to the next.
+let currentRoom: string | undefined
+let variant: Variant = VARIANTS.find((v) => v.key === params.get('variant')?.toUpperCase())?.key ?? 'A'
+let flight: { from: THREE.Vector3; to: THREE.Vector3; fromTarget: THREE.Vector3; toTarget: THREE.Vector3; start: number } | undefined
 
 function resize() {
   const width = headless ? Number(params.get('w') ?? 1280) : window.innerWidth
@@ -328,6 +334,11 @@ function applyLabelVisibility(view: View, label: string) {
 }
 
 function applyView(next: View, label: string) {
+  if (view === 'room' && next !== 'room') {
+    leaveRoomMode()
+    orbit.minDistance = 0
+    orbit.zoomToCursor = false
+  }
   applyLabelVisibility(next, label)
   view = next
   if (built) built.labels.visible = labelsOn && (view === 'plan' || view === 'orbit')
@@ -336,7 +347,7 @@ function applyView(next: View, label: string) {
   $('camera').textContent = label
   document.body.classList.toggle('walking', view === 'walk')
   applyLevelCap()
-  const current = view === 'walk' ? currentPlace : view === 'orbit' ? 'orbit' : view === 'plan' ? 'plan' : undefined
+  const current = view === 'walk' ? currentPlace : view === 'orbit' ? 'orbit' : view === 'plan' ? 'plan' : view === 'room' ? `room:${currentRoom}` : undefined
   for (const button of document.querySelectorAll<HTMLButtonElement>('#sidebar button[data-camera]')) {
     button.classList.toggle('active', button.dataset.camera === current || (view === 'walk' && button.dataset.camera === 'walk'))
   }
@@ -434,6 +445,91 @@ function useCamera(id: string) {
   }
   orbit.update()
 }
+
+// ---- PROTOTYPE: Room mode (dotfiles#664 step 1) ---------------------------
+
+// The current room alone, circled around its centre from outside and
+// above, close enough in to see an outlet: 20 cm at the nearest.
+function enterRoom(id: string) {
+  if (!scene || !built) return
+  const room = scene.rooms.find((r) => r.id === id)
+  if (!room) return
+  if (locked()) document.exitPointerLock()
+  rememberWalk()
+  currentRoom = id
+  const xs = room.floor.map((p) => p[0])
+  const ys = room.floor.map((p) => p[1])
+  // The sphere around the look point that holds the floor and the walls'
+  // full height, since the far walls stand.
+  const reach = Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) / 2
+  const radius = Math.max(1.5, Math.hypot(reach, roomHeight(scene, room) - 0.6))
+  const [cx, cy] = centroid(room.floor)
+  const target = toWorld([cx, cy], roomElevation(scene, room) + 0.6)
+  // Keep the side the person was looking from when going room to room;
+  // from elsewhere, start from the southwest like the overview.
+  const keep = view === 'room' ? perspective.position.clone().sub(orbit.target).setY(0) : undefined
+  const along = keep && keep.lengthSq() > 0.01 ? keep.normalize() : new THREE.Vector3(-0.6, 0, 0.8)
+  // Far enough back that the whole room fits the picture, looking down
+  // at about 48 degrees.
+  const distance = (radius / Math.sin(THREE.MathUtils.degToRad(45 / 2))) * 1.1
+  const position = target.clone().add(along.multiplyScalar(0.67).add(new THREE.Vector3(0, 0.74, 0)).normalize().multiplyScalar(distance))
+  const fromWalk = view === 'walk' || active !== perspective
+  active = perspective
+  orbit.enabled = true
+  orbit.minDistance = 0.2
+  orbit.zoomToCursor = true
+  perspective.fov = 45
+  perspective.updateProjectionMatrix()
+  applyView('room', `room: ${room.name ?? room.id}`)
+  if (headless || fromWalk) {
+    flight = undefined
+    perspective.position.copy(position)
+    orbit.target.copy(target)
+    orbit.update()
+  } else {
+    flight = { from: perspective.position.clone(), to: position, fromTarget: orbit.target.clone(), toTarget: target, start: performance.now() }
+  }
+  select(undefined)
+}
+
+// The order to step through: the scene's own order, for now.
+function stepRoom(step: number) {
+  if (!scene || scene.rooms.length === 0) return
+  const index = scene.rooms.findIndex((r) => r.id === currentRoom)
+  const next = index < 0 ? (step > 0 ? 0 : scene.rooms.length - 1) : (index + step + scene.rooms.length) % scene.rooms.length
+  enterRoom(scene.rooms[next].id)
+}
+
+// The room under a point in plan: the one whose floor is nearest below it.
+function roomAt(x: number, y: number, height: number): string | undefined {
+  if (!scene) return undefined
+  let best: { id: string; gap: number } | undefined
+  for (const r of scene.rooms) {
+    if (!pointInPolygon([x, y], r.floor)) continue
+    const gap = height - roomElevation(scene, r)
+    if (gap < -0.3) continue
+    if (!best || gap < best.gap) best = { id: r.id, gap }
+  }
+  return best?.id
+}
+
+function shownInWorld(object: THREE.Object3D | null): boolean {
+  for (let o = object; o; o = o.parent) if (!o.visible) return false
+  return true
+}
+
+// Double-click a room, in the overview or in Room mode, to go to it.
+canvas.addEventListener('dblclick', (event) => {
+  if (!built || view === 'walk' || view === 'plan') return
+  const rect = canvas.getBoundingClientRect()
+  const pointer = new THREE.Vector2(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1)
+  raycaster.setFromCamera(pointer, active)
+  for (const hit of raycaster.intersectObjects(built.root.children, true)) {
+    if (!shownInWorld(hit.object)) continue
+    const id = roomAt(hit.point.x, -hit.point.z, hit.point.y + 0.05)
+    if (id) return enterRoom(id)
+  }
+})
 
 // ---- Walking --------------------------------------------------------------
 
@@ -593,7 +689,9 @@ window.addEventListener('keydown', (event) => {
   if (event.ctrlKey || event.metaKey || event.altKey) return
   if (event.code.startsWith('Arrow') || event.code === 'PageUp' || event.code === 'PageDown') event.preventDefault()
   const key = event.key.toLowerCase()
-  if (key === 'c' || key === 'n') cyclePlace(1)
+  if (view === 'room' && (key === 'n' || key === 'b')) stepRoom(key === 'n' ? 1 : -1)
+  else if (key === 'r') enterRoom(currentRoom ?? (selected && scene?.rooms.some((r) => r.id === selected) ? selected : scene?.rooms[0]?.id) ?? '')
+  else if (key === 'c' || key === 'n') cyclePlace(1)
   else if (key === 'b') cyclePlace(-1)
   else if (key === 'o') useCamera('orbit')
   else if (key === 'p') useCamera('plan')
@@ -632,6 +730,8 @@ window.addEventListener('mouseup', () => {
 canvas.addEventListener('dblclick', () => {
   if (view === 'walk') canvas.requestPointerLock?.()
 })
+canvas.addEventListener('pointerdown', () => (flight = undefined))
+canvas.addEventListener('wheel', () => (flight = undefined), { passive: true })
 document.addEventListener('pointerlockchange', () => document.body.classList.toggle('locked', locked()))
 let touch: { x: number; y: number } | undefined
 canvas.addEventListener('touchstart', (event) => {
@@ -709,6 +809,15 @@ function buildSidebar() {
     menu.append(select)
   }
 
+  if (scene && scene.rooms.length > 0) {
+    section('Rooms')
+    const rooms = document.createElement('div')
+    rooms.className = 'row'
+    rooms.append(button('‹ Previous', 'room-prev', () => stepRoom(-1)), button('Next ›', 'room-next', () => stepRoom(1)))
+    menu.append(rooms)
+    for (const room of scene.rooms) menu.append(button(room.name ?? room.id, `room:${room.id}`, () => enterRoom(room.id)))
+  }
+
   const list = places()
   if (list.length > 0) {
     section('Places')
@@ -739,7 +848,7 @@ canvas.addEventListener('click', (event) => {
   raycaster.setFromCamera(pointer, active)
   const ids = new Set(built.entities.keys())
   for (const hit of raycaster.intersectObjects(built.root.children, true)) {
-    if (!hit.object.visible) continue
+    if (!shownInWorld(hit.object)) continue
     let object: THREE.Object3D | null = hit.object
     while (object && !(object.name && ids.has(object.name))) object = object.parent
     if (object) return select(object.name)
@@ -915,13 +1024,13 @@ const stateKey = `stage:view:${scenePath}`
 function saveView() {
   if (headless || !scene) return
   try {
-    sessionStorage.setItem(stateKey, JSON.stringify({ view, label: $('camera').textContent, position: perspective.position.toArray(), target: orbit.target.toArray(), fov: perspective.fov, cap: cap === Infinity ? null : cap, planLevel, yaw, pitch, foot, place: currentPlace }))
+    sessionStorage.setItem(stateKey, JSON.stringify({ view, label: $('camera').textContent, position: perspective.position.toArray(), target: orbit.target.toArray(), fov: perspective.fov, cap: cap === Infinity ? null : cap, planLevel, yaw, pitch, foot, place: currentPlace, room: currentRoom }))
   } catch {}
 }
 function restoreView(): boolean {
   if (headless || params.has('camera')) return false
   try {
-    const saved = JSON.parse(sessionStorage.getItem(stateKey) ?? 'null') as { view: View; label: string; position: number[]; target: number[]; fov: number; cap: number | null; planLevel?: number; yaw?: number; pitch?: number; foot?: number; place?: string } | null
+    const saved = JSON.parse(sessionStorage.getItem(stateKey) ?? 'null') as { view: View; label: string; position: number[]; target: number[]; fov: number; cap: number | null; planLevel?: number; yaw?: number; pitch?: number; foot?: number; place?: string; room?: string } | null
     if (!saved) return false
     cap = saved.cap === null || saved.cap === undefined ? Infinity : saved.cap
     if (saved.view === 'plan') {
@@ -934,6 +1043,14 @@ function restoreView(): boolean {
       beginWalk([saved.position[0], -saved.position[2]], saved.foot ?? saved.position[1] - EYE, undefined, saved.place ?? 'walk')
       return true
     }
+    if (saved.view === 'room' && saved.room) {
+      enterRoom(saved.room)
+      flight = undefined
+      perspective.position.fromArray(saved.position)
+      orbit.target.fromArray(saved.target)
+      orbit.update()
+      return true
+    }
     active = perspective
     orbit.enabled = true
     perspective.fov = saved.fov
@@ -941,7 +1058,7 @@ function restoreView(): boolean {
     perspective.position.fromArray(saved.position)
     orbit.target.fromArray(saved.target)
     orbit.update()
-    applyView(saved.view, saved.label)
+    applyView(saved.view === 'room' ? 'orbit' : saved.view, saved.label)
     return true
   } catch {
     return false
@@ -1003,6 +1120,13 @@ const lastView = new THREE.Matrix4()
 let stillSince = 0
 function frame() {
   const delta = Math.min(clock.getDelta(), 0.1)
+  if (flight) {
+    const t = Math.min(1, (performance.now() - flight.start) / 700)
+    const e = t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2
+    perspective.position.lerpVectors(flight.from, flight.to, e)
+    orbit.target.lerpVectors(flight.fromTarget, flight.toTarget, e)
+    if (t >= 1) flight = undefined
+  }
   if (view === 'walk') walkStep(delta)
   else if (orbit.enabled) orbit.update()
   const now = performance.now()
@@ -1017,8 +1141,11 @@ function frame() {
   }
   updateInside()
   placeLights(now)
-  if (built) applyCutaway(built.root, active, !inside, active === perspective, view === 'orbit' || view === 'focus', reach(cap))
-  if (view === 'orbit' || view === 'focus') shadowsChanged()
+  if (built && view === 'room' && currentRoom && scene) {
+    const here = storeyOf(levelIndexOf(scene.rooms.find((r) => r.id === currentRoom)?.level) ?? 0)
+    applyRoomMode(built, scene, currentRoom, variant, active, (level) => storeyOf(level) === here)
+  } else if (built) applyCutaway(built.root, active, !inside, active === perspective, view === 'orbit' || view === 'focus', reach(cap))
+  if (view === 'orbit' || view === 'focus' || view === 'room') shadowsChanged()
   showProgress()
   // Ambient occlusion only once the view holds still: moving stays smooth,
   // and the finished picture fills in a fifth of a second after you stop.
@@ -1134,6 +1261,8 @@ async function start() {
     lawnMesh.material = floorMaterial('grass')
     phase('scene')
     await load(true)
+    if (params.get('room')) enterRoom(params.get('room')!)
+    if (params.has('variant') && !headless) variantSwitcher(variant, (v) => (variant = v), () => view !== 'walk')
     phase('sky')
     await applySky()
     if (headless && params.has('export')) {
