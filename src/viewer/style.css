@@ -1,7 +1,7 @@
 :root {
   --panel: rgba(18, 18, 22, 0.78);
   --text: #f1efe9;
-  --muted: #a9a6a0;
+  --muted: #bab7b1;
   --accent: #e8b43a;
   --error: #ff8a7a;
   --warning: #f0c060;
@@ -9,21 +9,27 @@
 
 * { box-sizing: border-box; }
 
+/* 14 px at the browser's usual size; sizes are in rem so a larger default
+   font in the browser makes all of it larger. */
+html { font-size: 87.5%; }
 html, body {
   margin: 0;
   height: 100%;
   overflow: hidden;
   background: #e8e5df;
-  font: 14px/1.4 system-ui, -apple-system, 'Segoe UI', sans-serif;
   color: var(--text);
 }
+body { font: 1rem/1.4 system-ui, -apple-system, 'Segoe UI', sans-serif; }
+button:focus-visible, select:focus-visible, h2[tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 canvas#view { display: block; width: 100vw; height: 100vh; }
 
 .hud { position: fixed; inset: 0; pointer-events: none; }
 .hud .top { position: absolute; top: 16px; left: 16px; right: 100px; display: flex; gap: 10px; align-items: center; }
 .hud .top > * { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.hud .bottom { position: absolute; left: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 8px; max-width: min(560px, calc(100vw - 32px)); }
+/* Beside the open menu, not under it. */
+.hud .bottom { position: absolute; left: 242px; bottom: 16px; display: flex; flex-direction: column; gap: 8px; max-width: min(560px, calc(100vw - 258px)); }
+.sidebar.collapsed ~ .bottom { left: 16px; max-width: min(560px, calc(100vw - 32px)); }
 
 .title, .chip, .panel {
   background: var(--panel);
@@ -31,10 +37,9 @@ canvas#view { display: block; width: 100vw; height: 100vh; }
   border-radius: 8px;
   padding: 6px 12px;
 }
-.title { font-weight: 600; font-size: 15px; }
-.chip { color: var(--muted); font-size: 13px; }
-.scene-picker { pointer-events: auto; border: 0; font: inherit; font-size: 13px; color: var(--text); max-width: 46vw; cursor: pointer; }
-.scene-picker:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.title { font-weight: 600; font-size: 1.07rem; }
+.chip { color: var(--muted); font-size: 0.93rem; }
+.scene-picker { pointer-events: auto; border: 0; font: inherit; font-size: 0.93rem; color: var(--text); max-width: 46vw; cursor: pointer; }
 .scene-picker option, .scene-picker optgroup { color: #1a1a1a; }
 /* On a phone the menu already marks the place, and the picker needs the room. */
 @media (max-width: 600px) { #camera { display: none; } }
@@ -43,15 +48,15 @@ canvas#view { display: block; width: 100vw; height: 100vh; }
 
 #status .live { color: var(--accent); font-weight: 600; }
 #status.flash { outline: 2px solid var(--accent); }
-.problems { max-height: 30vh; overflow: auto; font-size: 12.5px; }
+.problems { max-height: 30vh; overflow: auto; font-size: 0.9rem; }
 .problems .error { color: var(--error); }
 .problems .warning { color: var(--warning); }
 .problems div + div { margin-top: 4px; }
 #selection code, .problems code { color: var(--accent); }
 
-.help { position: absolute; top: 60px; right: 16px; display: grid; gap: 4px; }
+.help { position: absolute; top: 60px; right: 16px; display: grid; gap: 4px; max-width: 420px; max-height: calc(100vh - 76px); overflow-y: auto; z-index: 2; background: rgba(18, 18, 22, 0.95); }
 .help-title { font-weight: 600; margin-bottom: 4px; }
-.hint { position: absolute; top: 16px; right: 16px; background: var(--panel); border-radius: 8px; padding: 6px 10px; color: var(--muted); font-size: 13px; }
+.hint { position: absolute; top: 16px; right: 16px; background: var(--panel); border: 0; border-radius: 8px; padding: 6px 10px; font: inherit; color: var(--muted); font-size: 0.93rem; cursor: pointer; pointer-events: auto; }
 
 kbd {
   display: inline-block;
@@ -59,7 +64,7 @@ kbd {
   padding: 0 5px;
   border: 1px solid rgba(255, 255, 255, 0.25);
   border-radius: 4px;
-  font: 12px ui-monospace, monospace;
+  font: 0.86rem ui-monospace, monospace;
   text-align: center;
   color: var(--text);
 }
@@ -74,12 +79,12 @@ body.headless .hud { display: none; }
   width: 210px;
   display: flex;
   flex-direction: column;
-  pointer-events: auto;
 }
+.menu-toggle, .menu { pointer-events: auto; }
 .menu-toggle {
   align-self: flex-start;
   font: inherit;
-  font-size: 16px;
+  font-size: 1.14rem;
   color: var(--text);
   background: var(--panel);
   border: 0;
@@ -102,17 +107,17 @@ body.headless .hud { display: none; }
 .sidebar.collapsed .menu { display: none; }
 .menu .section {
   margin: 8px 6px 2px;
-  font-size: 11px;
+  font-size: 0.86rem;
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--muted);
 }
 .menu .section:first-child { margin-top: 2px; }
-.menu .level { margin: 6px 6px 0; font-size: 12px; color: var(--muted); }
+.menu .level { margin: 6px 6px 0; font-size: 0.86rem; color: var(--muted); }
 .menu button, .menu select {
   font: inherit;
-  font-size: 13px;
+  font-size: 0.93rem;
   color: var(--text);
   background: transparent;
   border: 0;
@@ -125,12 +130,13 @@ body.headless .hud { display: none; }
 .menu select option { color: #1a1a1a; }
 .menu button:hover { background: rgba(255, 255, 255, 0.1); }
 .menu button.active { background: rgba(255, 255, 255, 0.18); }
-.menu button.walk { background: var(--accent); color: #1a1a1a; font-weight: 600; }
-.menu button.walk:hover { filter: brightness(1.08); }
-.menu .row { display: flex; gap: 2px; }
+/* The current room: a bar at its edge and bold, not only a tint. */
+.menu button[aria-current] { background: rgba(255, 255, 255, 0.14); box-shadow: inset 3px 0 0 var(--accent); font-weight: 600; }
+/* Previous and Next stay in reach however far the list has scrolled. */
+.menu .row { display: flex; gap: 2px; position: sticky; top: 0; z-index: 1; background: #121216; border-radius: 7px; box-shadow: 0 -6px 0 #121216; }
 .menu .row button { flex: 1; text-align: center; }
 
-.crosshair, .walk-hint { display: none; }
+.crosshair { display: none; }
 body.locked .crosshair {
   display: block;
   position: absolute;
@@ -143,17 +149,48 @@ body.locked .crosshair {
   background: rgba(255, 255, 255, 0.85);
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
 }
-body.walking .walk-hint {
-  display: block;
-  position: absolute;
-  bottom: 16px;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 13px;
-}
-body.locked .bottom, body.locked .hint { display: none; }
+body.locked .bottom, body.locked .hint, body.locked .room-panel { display: none; }
 .hud .top { left: 16px; }
 
 .loading { position: absolute; top: 0; left: 0; right: 0; height: 4px; background: rgba(0, 0, 0, 0.25); }
 .loading .progress { height: 100%; background: var(--accent); transition: width 0.2s; }
-.loading .progress-label { position: absolute; top: 8px; right: 16px; font-size: 12px; color: var(--muted); background: var(--panel); padding: 3px 8px; border-radius: 6px; }
+.loading .progress-label { position: absolute; top: 8px; right: 16px; font-size: 0.86rem; color: var(--muted); background: var(--panel); padding: 3px 8px; border-radius: 6px; }
+
+/* The mode switcher: always on screen, the mode you are in filled. */
+.modes { flex: none; display: flex; gap: 2px; padding: 3px; border-radius: 8px; background: var(--panel); backdrop-filter: blur(8px); pointer-events: auto; }
+.modes button, .units button, .walls button {
+  font: inherit;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+.modes button:hover, .units button:hover, .walls button:hover { background: rgba(255, 255, 255, 0.1); }
+.modes button[aria-pressed='true'], .units button[aria-pressed='true'], .walls button[aria-pressed='true'] { background: var(--accent); color: #1a1a1a; font-weight: 600; }
+.modes button:disabled { opacity: 0.45; cursor: default; }
+
+/* How to get around in this mode, and Room mode's walls. */
+.mode-hint { color: var(--muted); font-size: 0.93rem; }
+.walls { display: inline-flex; align-items: center; gap: 2px; color: var(--text); }
+.walls button { padding: 1px 8px; }
+
+/* The room panel: the current room's facts, on the right. */
+.room-panel { position: absolute; top: 60px; right: 16px; width: 280px; max-height: calc(100vh - 76px); overflow-y: auto; padding: 12px 14px; }
+.room-panel h2 { margin: 0; font-size: 1.14rem; line-height: 1.25; }
+.room-level { color: var(--muted); font-size: 0.93rem; }
+.room-panel h3 { margin: 14px 0 4px; font-size: 0.86rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.room-panel .facts { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; margin: 10px 0 0; }
+.room-panel dt { color: var(--muted); }
+.room-panel dd { margin: 0; font-variant-numeric: tabular-nums; }
+.room-panel ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.room-panel .openings li { display: flex; flex-direction: column; }
+.room-panel .dims { color: var(--muted); font-size: 0.93rem; font-variant-numeric: tabular-nums; }
+.room-panel .link { font: inherit; color: var(--accent); background: none; border: 0; padding: 0; text-align: left; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+/* Narrower than the menu, the hint and the panel side by side: the panel
+   stops above the hint. */
+@media (max-width: 1097px) {
+  .room-panel { max-height: calc(100vh - 76px - 9rem); }
+}
+.room-panel .units { display: flex; gap: 2px; margin-top: 14px; padding: 3px; width: fit-content; border-radius: 8px; background: rgba(255, 255, 255, 0.06); }

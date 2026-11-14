@@ -8,6 +8,9 @@ import { searchAssets } from '../src/core/assets.ts'
 import { check } from '../src/core/check.ts'
 import { distanceToSegment, slabAbove, storeys, walls, wallPieces } from '../src/core/geometry.ts'
 import { query } from '../src/core/query.ts'
+import { roomFacts, stepRoom } from '../src/core/room-facts.ts'
+import { Scene } from '../src/core/schema.ts'
+import { formatArea, formatLength, formatLevel, formatSize } from '../src/core/units.ts'
 import { materialSpec } from '../src/core/materials.ts'
 import { format, readScene, writeScene } from '../src/core/store.ts'
 import { BODY_RADIUS, floorToFloor, ground, obstacles, resolve } from '../src/core/walk.ts'
@@ -562,4 +565,59 @@ test("a room's top view has north at the top, as the plan has", () => {
   assert.ok(top.at![1] < top.look![1], `stands south of the middle: ${top.at} looking at ${top.look}`)
   assert.ok(Math.abs(top.at![0] - top.look![0]) < 0.01, `not off to one side: ${top.at}`)
   assert.ok(top.at![2] > 2, `above: ${top.at}`)
+})
+
+test('the room panel facts: size, area, ceiling, floor level, openings and places', async () => {
+  const scene = Scene.parse(await example())
+  const living = roomFacts(scene, 'living')!
+  assert.equal(living.name, 'Living room')
+  assert.deepEqual(living.size, [5.5, 4])
+  assert.equal(living.overall, false)
+  assert.equal(living.area, 22)
+  assert.equal(living.ceiling, 2.7)
+  assert.equal(living.floor, 0)
+  assert.deepEqual(
+    living.openings.map((o) => [o.id, o.type, o.to, o.sill]),
+    [
+      ['front-door', 'door', undefined, undefined],
+      ['pass-through', 'opening', 'kitchen', undefined],
+      ['living-window', 'window', undefined, 0.9],
+    ],
+  )
+  assert.deepEqual(living.places, ['from-door'])
+  // The opening is given on the living room's edge; the kitchen has it too.
+  const kitchen = roomFacts(scene, 'kitchen')!
+  assert.deepEqual(kitchen.openings.map((o) => [o.id, o.to]), [['pass-through', 'living'], ['kitchen-window', undefined]])
+  assert.deepEqual(kitchen.places, ['kitchen-view'])
+})
+
+test('floor levels count from the level called ground, and an L-shaped room gives its overall size', async () => {
+  const raw = await example()
+  raw.levels = [{ id: 'lower', elevation: 0.15 }, { id: 'ground', elevation: 0.9 }]
+  raw.rooms[0].level = 'lower'
+  raw.rooms[1].floor = [[5.5, 0], [9, 0], [9, 2], [7, 2], [7, 4], [5.5, 4]]
+  const scene = Scene.parse(raw)
+  assert.equal(formatLevel(roomFacts(scene, 'living')!.floor, 'm'), '−0.75 m')
+  assert.equal(formatLevel(roomFacts(scene, 'kitchen')!.floor, 'm'), '±0.00 m')
+  assert.deepEqual(roomFacts(scene, 'kitchen')!.size, [4, 3.5])
+  assert.equal(roomFacts(scene, 'kitchen')!.overall, true)
+})
+
+test('lengths and areas in meters or feet and inches', () => {
+  assert.equal(formatLength(0.9, 'm'), '0.90 m')
+  assert.equal(formatLength(0.9, 'ft'), '2′ 11″')
+  assert.equal(formatLength(0.15, 'ft'), '6″')
+  assert.equal(formatSize([4.2, 3.8], 'ft'), '13′ 9″ × 12′ 6″')
+  assert.equal(formatArea(22, 'm'), '22.0 m²')
+  assert.equal(formatArea(22, 'ft'), '237 ft²')
+  assert.equal(formatLevel(-0.75, 'ft'), '−2′ 6″')
+  assert.equal(formatLevel(0.3, 'm'), '+0.30 m')
+})
+
+test('previous and next go round the rooms in the scene order', async () => {
+  const scene = Scene.parse(await example())
+  assert.equal(stepRoom(scene, undefined, 1), 'living')
+  assert.equal(stepRoom(scene, undefined, -1), 'kitchen')
+  assert.equal(stepRoom(scene, 'kitchen', 1), 'living')
+  assert.equal(stepRoom(scene, 'living', -1), 'kitchen')
 })

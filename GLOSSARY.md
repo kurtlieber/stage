@@ -67,7 +67,7 @@ The panel beside the scene that gives the facts about the current room, its room
 _Avoid_: card, info box, sidebar
 
 **Cutaway**:
-Walls between the camera and what it looks at, cut down so the person sees in.
+Walls between the camera and what it looks at, cut down or turned to glass so the person sees in.
 _Avoid_: dollhouse, slice, section
 
 ## Reviewing

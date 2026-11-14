@@ -7,14 +7,18 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js'
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js'
 import { findAsset } from '../core/assets.ts'
 import { check, type Problem } from '../core/check.ts'
-import { allCameras, findCamera } from '../core/cameras.ts'
-import { centroid, levelsByElevation, pointInPolygon, roomElevation, roomHeight, sceneBounds, storeys, type Point } from '../core/geometry.ts'
+import { findCamera } from '../core/cameras.ts'
+import { bounds, centroid, levelsByElevation, pointInPolygon, roomElevation, roomHeight, sceneBounds, storeys, type Point } from '../core/geometry.ts'
 import { STEP, ground, obstacles, resolve as resolveWalk, type Obstacles } from '../core/walk.ts'
 import { SKY } from '../core/materials.ts'
+import { roomFacts, roomName, roomUnder, stepRoom } from '../core/room-facts.ts'
 import type { Scene } from '../core/schema.ts'
+import { formatLength, formatSize, type Units } from '../core/units.ts'
 import { applyCutaway, buildScene, floorMaterial, toWorld, type Built } from './build.ts'
 import { useSurfaces } from './furniture.ts'
 import { loadLibrary, loadSky, progress, settled, type Sky } from './library.ts'
+import { applyRoomMode, leaveRoomMode, type Walls } from './room-mode.ts'
+import { renderRoomPanel } from './room-panel.ts'
 import { speckle } from './textures.ts'
 
 // The viewer. The same page serves a person in a browser and the command
@@ -48,6 +52,8 @@ renderer.toneMappingExposure = 1.1
 renderer.shadowMap.enabled = true
 renderer.shadowMap.type = THREE.PCFSoftShadowMap
 renderer.shadowMap.autoUpdate = false
+// Room mode cuts the doors and windows in a low wall at the strip.
+renderer.localClippingEnabled = true
 
 const world = new THREE.Scene()
 const pmrem = new THREE.PMREMGenerator(renderer)
@@ -133,7 +139,8 @@ const perspective = new THREE.PerspectiveCamera(WALK_FOV, 1, 0.05, 900)
 const plan = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.1, 500)
 let active: THREE.Camera = perspective
 const orbit = new OrbitControls(perspective, canvas)
-orbit.enableDamping = !headless
+// The glide after a drag is motion the person didn't ask for.
+orbit.enableDamping = !headless && !matchMedia('(prefers-reduced-motion: reduce)').matches
 orbit.maxPolarAngle = Math.PI * 0.495
 // First-person looking: a yaw and a pitch the mouse (locked, or dragged),
 // the arrow keys, or a touch turn. No pointer lock is needed; it is used
@@ -171,7 +178,7 @@ composer.addPass(ao)
 composer.addPass(new OutputPass())
 
 // High quality until frames get slow (a machine without a GPU), then fast:
-// no ambient occlusion, one pixel per pixel. Q switches by hand.
+// no ambient occlusion, one pixel per pixel. F switches by hand.
 let quality: 'high' | 'fast' = params.get('quality') === 'fast' ? 'fast' : 'high'
 let slowFrames = 0
 function setQuality(next: 'high' | 'fast', why: string) {
@@ -204,7 +211,13 @@ function alignSky() {
   world.backgroundRotation.y = turn
 }
 
-type View = 'orbit' | 'plan' | 'camera' | 'walk' | 'focus'
+// What the camera is doing. The person sees four modes (GLOSSARY.md):
+// Plan is 'plan', Room is 'room', Walk is 'walk', and House is the
+// overview, 'orbit', along with the two views the agent sets, a named
+// camera and a thing framed close up.
+type View = 'orbit' | 'plan' | 'camera' | 'walk' | 'focus' | 'room'
+type Mode = 'plan' | 'house' | 'room' | 'walk'
+const modeOf = (v: View): Mode => (v === 'plan' || v === 'room' || v === 'walk' ? v : 'house')
 let view: View = 'orbit'
 let scene: Scene | undefined
 // Levels from the lowest up, and the highest one shown: everything above
@@ -220,6 +233,32 @@ const highlights: { helper: THREE.BoxHelper; until: number }[] = []
 let labelsOn = true
 let selected: string | undefined
 let lastUpdate = 0
+// The room every mode centres on: picked by the person, or in Walk mode the
+// room they stand in.
+let currentRoom: string | undefined
+// The person's own settings, kept in this browser between visits: how Room
+// mode opens the near walls, and the units every number is printed in.
+let walls: Walls = setting('walls', ['low', 'glass'], 'low')
+let units: Units = setting('units', ['m', 'ft'], 'm')
+// The camera's move from one view to the next.
+let flight: { from: THREE.Vector3; to: THREE.Vector3; fromTarget: THREE.Vector3; toTarget: THREE.Vector3; fromFov: number; toFov: number; start: number } | undefined
+// Whether the first view is up, so later moves fly to the next one.
+let landed = false
+
+function setting<T extends string>(name: string, allowed: readonly T[], fallback: T): T {
+  let value = params.get(name)
+  if (value === null && !headless) {
+    try {
+      value = localStorage.getItem(`stage:${name}`)
+    } catch {}
+  }
+  return allowed.includes(value as T) ? (value as T) : fallback
+}
+function keepSetting(name: string, value: string) {
+  try {
+    localStorage.setItem(`stage:${name}`, value)
+  } catch {}
+}
 
 function resize() {
   const width = headless ? Number(params.get('w') ?? 1280) : window.innerWidth
@@ -312,7 +351,7 @@ function setCap(index: number) {
 }
 
 function planLabel(): string {
-  return levels.length > 1 ? `camera: plan · ${levels[planLevel]?.name ?? levels[planLevel]?.id}` : 'camera: plan'
+  return levels.length > 1 ? `Plan · ${levels[planLevel]?.name ?? levels[planLevel]?.id}` : 'Plan'
 }
 
 // What each view shows: ceilings and room lights inside, room labels and
@@ -328,18 +367,22 @@ function applyLabelVisibility(view: View, label: string) {
 }
 
 function applyView(next: View, label: string) {
+  if (next !== view) flight = undefined
+  if (view === 'room' && next !== 'room') leaveRoomMode()
+  roomControls(next === 'room')
   applyLabelVisibility(next, label)
   view = next
   if (built) built.labels.visible = labelsOn && (view === 'plan' || view === 'orbit')
   if (built) for (const roof of built.roofs) roof.visible = view === 'walk' || view === 'camera'
   inside = undefined
   $('camera').textContent = label
+  const mode = modeOf(view)
   document.body.classList.toggle('walking', view === 'walk')
+  document.body.dataset.mode = mode
   applyLevelCap()
-  const current = view === 'walk' ? currentPlace : view === 'orbit' ? 'orbit' : view === 'plan' ? 'plan' : undefined
-  for (const button of document.querySelectorAll<HTMLButtonElement>('#sidebar button[data-camera]')) {
-    button.classList.toggle('active', button.dataset.camera === current || (view === 'walk' && button.dataset.camera === 'walk'))
-  }
+  for (const button of document.querySelectorAll<HTMLButtonElement>('#modes button')) button.setAttribute('aria-pressed', String(button.dataset.mode === mode))
+  for (const button of document.querySelectorAll<HTMLButtonElement>('#menu button[data-place]')) button.classList.toggle('active', view === 'walk' && button.dataset.place === currentPlace)
+  showModeHint()
 }
 
 // Whether the camera stands inside a room, below its ceiling: that, not the
@@ -368,9 +411,16 @@ function updateInside() {
   world.environmentIntensity = skyImage ? (now ? 0.55 : 0.85) : 0.18
 }
 
-// The overview: from the southwest, high enough to see into every room.
-function overview() {
-  if (!scene) return
+interface Pose {
+  position: THREE.Vector3
+  target: THREE.Vector3
+  fov: number
+}
+
+// The whole house: from the southwest, high enough to see into every room,
+// or from the side given, at the same height.
+function overviewPose(side?: THREE.Vector3): Pose | undefined {
+  if (!scene) return undefined
   const b = sceneBounds(scene)
   const cx = (b.min[0] + b.max[0]) / 2
   const cy = (b.min[1] + b.max[1]) / 2
@@ -378,10 +428,17 @@ function overview() {
   const height = top ? top.elevation + top.height : 3
   const size = Math.max(b.max[0] - b.min[0], b.max[1] - b.min[1], height * 1.6, 4)
   const target = toWorld([cx, cy], Math.min(height / 2, 2))
-  perspective.fov = 40
+  const direction = side ? side.clone().setY(0).setLength(Math.hypot(0.42, 0.66)).setY(0.8).normalize() : new THREE.Vector3(-0.42, 0.8, 0.66).normalize()
+  return { position: target.clone().add(direction.multiplyScalar(size * 1.35)), target, fov: 40 }
+}
+
+function overview() {
+  const pose = overviewPose()
+  if (!pose) return
+  perspective.fov = pose.fov
   perspective.updateProjectionMatrix()
-  orbit.target.copy(target)
-  perspective.position.copy(target).add(new THREE.Vector3(-0.42, 0.8, 0.66).normalize().multiplyScalar(size * 1.35))
+  orbit.target.copy(pose.target)
+  perspective.position.copy(pose.position)
 }
 
 function useCamera(id: string) {
@@ -420,7 +477,7 @@ function useCamera(id: string) {
   if (name === 'orbit' || !camera?.at || !camera.look) {
     if (wanted !== undefined) cap = wanted >= levels.length - 1 ? Infinity : wanted
     overview()
-    applyView('orbit', 'camera: orbit')
+    applyView('orbit', 'House')
   } else if (!headless) {
     // A person goes to the place and stands there, feet on the floor.
     walkTo(camera.id)
@@ -433,6 +490,291 @@ function useCamera(id: string) {
     applyView('camera', `camera: ${id}`)
   }
   orbit.update()
+}
+
+// ---- Modes and the current room ---------------------------------------------
+
+const reducedMotion = () => !headless && matchMedia('(prefers-reduced-motion: reduce)').matches
+
+// Moves the camera to a pose: a short flight between two views from
+// outside, a cut everywhere else and for a person who asks for less motion.
+function flyTo(pose: Pose, smooth: boolean) {
+  if (!smooth || headless || reducedMotion()) {
+    flight = undefined
+    perspective.fov = pose.fov
+    perspective.updateProjectionMatrix()
+    perspective.position.copy(pose.position)
+    orbit.target.copy(pose.target)
+    orbit.update()
+    return
+  }
+  flight = { from: perspective.position.clone(), to: pose.position, fromTarget: orbit.target.clone(), toTarget: pose.target, fromFov: perspective.fov, toFov: pose.fov, start: performance.now() }
+}
+
+// One frame of a flight: seven tenths of a second, easing in and out.
+function fly(now: number) {
+  if (!flight) return
+  const t = Math.min(1, (now - flight.start) / 700)
+  const e = t < 0.5 ? 4 * t ** 3 : 1 - (-2 * t + 2) ** 3 / 2
+  perspective.position.lerpVectors(flight.from, flight.to, e)
+  orbit.target.lerpVectors(flight.fromTarget, flight.toTarget, e)
+  perspective.fov = flight.fromFov + (flight.toFov - flight.fromFov) * e
+  perspective.updateProjectionMatrix()
+  perspective.lookAt(orbit.target)
+  if (t >= 1) flight = undefined
+}
+
+// Whether the camera now circles from outside, so a move to another such
+// view can fly.
+const circling = () => landed && active === perspective && (view === 'orbit' || view === 'focus' || view === 'room')
+
+// Room mode lets the camera in close, to an outlet on the far wall, and
+// zooms toward the pointer rather than the room's middle.
+function roomControls(on: boolean) {
+  orbit.minDistance = on ? 0.2 : 0
+  orbit.zoomToCursor = on
+}
+
+function setMode(mode: Mode) {
+  if (!scene) return
+  if (mode === 'plan') useCamera(currentRoom ? `plan:${scene.rooms.find((r) => r.id === currentRoom)?.level ?? ''}` : 'plan')
+  else if (mode === 'house') showHouse()
+  else if (mode === 'room') enterRoom(currentRoom ?? scene.rooms[0]?.id)
+  else if (view !== 'walk') startWalk()
+}
+
+function showHouse() {
+  if (!scene) return
+  if (locked()) document.exitPointerLock()
+  rememberWalk()
+  const side = view === 'room' ? perspective.position.clone().sub(orbit.target).setY(0) : undefined
+  const pose = overviewPose(side && side.lengthSq() > 0.01 ? side : undefined)
+  if (!pose) return
+  const smooth = circling()
+  active = perspective
+  orbit.enabled = true
+  applyView('orbit', 'House')
+  flyTo(pose, smooth)
+}
+
+// Room mode: the current room alone, circled around its middle from
+// outside and above, close enough in to see an outlet, 20 cm at the
+// nearest.
+function enterRoom(id: string | undefined) {
+  if (!scene || !built || !id) return
+  const room = scene.rooms.find((r) => r.id === id)
+  if (!room) return
+  if (locked()) document.exitPointerLock()
+  rememberWalk()
+  // The sphere around the look point that holds the floor and the walls'
+  // full height, since the far walls stand.
+  const b = bounds(room.floor)
+  const half = Math.hypot(b.max[0] - b.min[0], b.max[1] - b.min[1]) / 2
+  const radius = Math.max(1.5, Math.hypot(half, roomHeight(scene, room) - 0.6))
+  const target = toWorld(centroid(room.floor), roomElevation(scene, room) + 0.6)
+  // Keep the side the person looks from; from elsewhere, start from the
+  // southwest like the house.
+  const smooth = circling()
+  const keep = smooth ? perspective.position.clone().sub(orbit.target).setY(0) : undefined
+  const along = keep && keep.lengthSq() > 0.01 ? keep.normalize() : new THREE.Vector3(-0.6, 0, 0.8)
+  // Far enough back that the whole room fits the picture, looking down at
+  // about 48 degrees.
+  const distance = (radius / Math.sin(THREE.MathUtils.degToRad(45 / 2))) * 1.1
+  const position = target.clone().add(along.multiplyScalar(0.67).add(new THREE.Vector3(0, 0.74, 0)).normalize().multiplyScalar(distance))
+  active = perspective
+  orbit.enabled = true
+  setCurrentRoom(id)
+  applyView('room', `Room · ${roomName(room)}`)
+  flyTo({ position, target, fov: 45 }, smooth)
+  select(undefined)
+}
+
+function setCurrentRoom(id: string | undefined) {
+  if (id === currentRoom) return
+  currentRoom = id
+  showCurrentRoom()
+}
+
+// Everything that shows the current room: the room panel, the mark on its
+// floor, and the room list.
+function showCurrentRoom() {
+  renderRoomPanel($('room-panel'), scene, currentRoom, units, { goToRoom, walkTo, placeName, setUnits })
+  markRoom()
+  for (const button of document.querySelectorAll<HTMLButtonElement>('#menu button[data-room]')) {
+    if (button.dataset.room !== currentRoom) button.removeAttribute('aria-current')
+    else {
+      button.setAttribute('aria-current', 'true')
+      button.scrollIntoView({ block: 'nearest' })
+    }
+  }
+}
+
+// A click in Plan or House mode picks a room without leaving the mode. A
+// plan turns to the room's own floor.
+function pickRoom(id: string) {
+  setCurrentRoom(id)
+  const index = levelIndexOf(scene?.rooms.find((r) => r.id === id)?.level)
+  if (view === 'plan' && index !== undefined && storeyOf(index) !== storeyOf(planLevel)) useCamera(`plan:${levels[index].id}`)
+}
+
+// Going to a room, from the list, a door in the room panel, previous and
+// next, or a double-click: House mode opens it in Room mode; Plan, Room and
+// Walk modes stay as they are and go to it.
+function goToRoom(id: string | undefined) {
+  if (!scene || !id || !scene.rooms.some((r) => r.id === id)) return
+  const mode = modeOf(view)
+  if (mode === 'plan') pickRoom(id)
+  else if (mode === 'walk') walkIntoRoom(id)
+  else enterRoom(id)
+}
+
+// Standing in a room: at its first place, else a step in from its far
+// corner looking across it, else in its middle.
+function walkIntoRoom(id: string) {
+  const room = scene?.rooms.find((r) => r.id === id)
+  if (!scene || !room) return
+  setCurrentRoom(id)
+  const place = roomFacts(scene, id)?.places[0]
+  const corner = findCamera(scene, `room:${id}`)
+  if (place) walkTo(place)
+  else if (corner?.at && corner.look) beginWalk([corner.at[0], corner.at[1]], roomElevation(scene, room), toWorld([corner.look[0], corner.look[1]], corner.look[2]))
+  else beginWalk(pointInside(room.floor), roomElevation(scene, room))
+}
+
+// A point inside a floor: its middle, or for an L or a U, which may not
+// hold its middle, the first point halfway to a corner that is inside.
+function pointInside(floor: Point[]): Point {
+  const middle = centroid(floor)
+  if (pointInPolygon(middle, floor)) return middle
+  for (const corner of floor) {
+    const p: Point = [(corner[0] + middle[0]) / 2, (corner[1] + middle[1]) / 2]
+    if (pointInPolygon(p, floor)) return p
+  }
+  return floor[0]
+}
+
+// In Walk mode the current room is the one underfoot, looked up a few
+// times a second. Outside, it stays the last room walked through.
+let followed = 0
+function followRoom(now: number) {
+  if (!scene || now - followed < 250) return
+  followed = now
+  const id = roomUnder(scene, [perspective.position.x, -perspective.position.z], foot + 0.05)
+  if (id) setCurrentRoom(id)
+}
+
+// The current room marked on its floor in Plan and House modes: a tint and
+// an edge, the edge as flat strips since lines draw one pixel wide. A plan
+// draws it over the drawing; the house, under its walls.
+const MARK = new THREE.MeshBasicMaterial({ color: '#e8b43a', transparent: true, opacity: 0.28, depthWrite: false, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2 })
+const MARK_EDGE = new THREE.MeshBasicMaterial({ color: '#e8b43a', side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2 })
+function showMark() {
+  marker.visible = (view === 'plan' || view === 'orbit') && (marker.userData.level ?? 0) <= reach(view === 'plan' ? planLevel : cap)
+  MARK.depthTest = MARK_EDGE.depthTest = view !== 'plan'
+}
+const marker = new THREE.Group()
+world.add(marker)
+function markRoom() {
+  for (const child of marker.children) (child as THREE.Mesh).geometry.dispose()
+  marker.clear()
+  const room = scene?.rooms.find((r) => r.id === currentRoom)
+  if (!scene || !room) return
+  const y = roomElevation(scene, room) + 0.03
+  const fill = new THREE.Mesh(new THREE.ShapeGeometry(new THREE.Shape(room.floor.map(([x, z]) => new THREE.Vector2(x, z)))), MARK)
+  fill.rotation.x = -Math.PI / 2
+  fill.position.y = y
+  fill.renderOrder = 10
+  marker.add(fill)
+  room.floor.forEach((a, i) => {
+    const b = room.floor[(i + 1) % room.floor.length]
+    const edge = new THREE.Mesh(new THREE.PlaneGeometry(Math.hypot(b[0] - a[0], b[1] - a[1]), 0.12), MARK_EDGE)
+    edge.renderOrder = 11
+    edge.rotation.set(-Math.PI / 2, 0, Math.atan2(b[1] - a[1], b[0] - a[0]))
+    edge.position.copy(toWorld([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], y + 0.005))
+    marker.add(edge)
+  })
+  marker.userData.level = levelIndexOf(room.level) ?? 0
+}
+
+// The room under a point on the screen, in Plan and House modes.
+function roomAtPointer(event: MouseEvent): string | undefined {
+  if (!scene) return undefined
+  const hit = hitsAt(event)[0]
+  return hit ? roomUnder(scene, [hit.point.x, -hit.point.z], hit.point.y + 0.05) : undefined
+}
+
+function setWalls(next: Walls) {
+  walls = next
+  keepSetting('walls', next)
+  showModeHint()
+  setStatus(`Room mode walls: ${next === 'low' ? 'cut low' : 'glass'}.`)
+}
+
+function setUnits(next: Units) {
+  units = next
+  keepSetting('units', next)
+  showCurrentRoom()
+  describe(selected)
+  setStatus(`Numbers in ${next === 'm' ? 'meters' : 'feet and inches'}.`)
+}
+
+// One line on how to get around in the mode the person is in. Room mode's
+// also holds the switch for its walls.
+const HINTS: Record<Mode, string> = {
+  plan: 'Click a room to pick it, double-click to open it · <kbd>[</kbd> <kbd>]</kbd> level down or up · <kbd>N</kbd> <kbd>B</kbd> next or previous room',
+  house: 'Drag or arrow keys to circle · scroll or <kbd>+</kbd> <kbd>−</kbd> to zoom · click a room to pick it, double-click to open it',
+  room: 'Drag or arrow keys to circle · scroll or <kbd>+</kbd> <kbd>−</kbd> to zoom · <kbd>N</kbd> <kbd>B</kbd> next or previous room',
+  walk: '<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · drag or <kbd>←</kbd> <kbd>→</kbd> to turn · double-click to lock the mouse · <kbd>N</kbd> <kbd>B</kbd> next or previous room',
+}
+function showModeHint() {
+  const mode = modeOf(view)
+  const hint = $('mode-hint')
+  const refocus = hint.contains(document.activeElement)
+  hint.innerHTML = HINTS[mode]
+  if (mode !== 'room') return
+  const group = document.createElement('span')
+  group.className = 'walls'
+  group.setAttribute('role', 'group')
+  group.setAttribute('aria-label', 'Walls')
+  group.append('Walls ')
+  for (const [value, text] of [['low', 'Low'], ['glass', 'Glass']] as const) {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.textContent = text
+    button.title = value === 'low' ? 'Near walls cut low (G)' : 'Near walls of glass (G)'
+    button.setAttribute('aria-pressed', String(walls === value))
+    button.addEventListener('click', () => setWalls(value))
+    group.append(button)
+  }
+  hint.prepend(group, ' · ')
+  if (refocus) group.querySelector<HTMLElement>('[aria-pressed="true"]')?.focus()
+}
+
+function showHelp(show: boolean) {
+  $('help').classList.toggle('hidden', !show)
+  $('help-toggle').setAttribute('aria-expanded', String(show))
+}
+$('help-toggle').addEventListener('click', () => showHelp($('help').classList.contains('hidden')))
+
+// Circling and zooming from the keyboard in House and Room modes: the
+// arrows go around the middle and over it, + and − go nearer and farther.
+const spherical = new THREE.Spherical()
+function keyOrbit(delta: number) {
+  const around = (keys.has('ArrowRight') ? 1 : 0) - (keys.has('ArrowLeft') ? 1 : 0)
+  const over = (keys.has('ArrowDown') ? 1 : 0) - (keys.has('ArrowUp') ? 1 : 0)
+  if (around === 0 && over === 0) return
+  const offset = perspective.position.clone().sub(orbit.target)
+  spherical.setFromVector3(offset)
+  spherical.theta += around * 1.4 * delta
+  spherical.phi = THREE.MathUtils.clamp(spherical.phi + over * 0.9 * delta, 0.05, orbit.maxPolarAngle)
+  perspective.position.copy(orbit.target).add(offset.setFromSpherical(spherical))
+}
+function zoomBy(factor: number) {
+  if (!orbit.enabled || active !== perspective) return
+  flight = undefined
+  const offset = perspective.position.clone().sub(orbit.target)
+  offset.setLength(THREE.MathUtils.clamp(offset.length() * factor, Math.max(orbit.minDistance, 0.2), orbit.maxDistance))
+  perspective.position.copy(orbit.target).add(offset)
 }
 
 // ---- Walking --------------------------------------------------------------
@@ -482,7 +824,7 @@ function beginWalk(at: Point, z: number, lookAt?: THREE.Vector3, label = 'walk')
   if (lookAt) lookFrom(perspective.position, lookAt)
   else applyLook()
   currentPlace = label === 'walk' ? currentPlace : label
-  applyView('walk', label === 'walk' ? 'walking' : `place: ${placeName(label)}`)
+  applyView('walk', label === 'walk' ? 'Walk' : `Walk · ${placeName(label)}`)
 }
 
 // Stand at a place the scene names, looking where its camera looks.
@@ -492,15 +834,16 @@ function walkTo(id: string) {
   beginWalk([camera.at[0], camera.at[1]], camera.at[2] - EYE, toWorld([camera.look[0], camera.look[1]], camera.look[2]), id)
 }
 
-// Walk: from where you left off, else from the first place, else from
-// the middle of the first room.
+// Walk: from where you left off if that is in the current room, else into
+// the current room, else from the first place, else from the middle of the
+// first room.
 function startWalk() {
   if (!scene) return
   if (view === 'walk') {
     canvas.requestPointerLock?.()
     return
   }
-  if (lastWalk) {
+  if (lastWalk && (!currentRoom || roomUnder(scene, [lastWalk.position.x, -lastWalk.position.z], lastWalk.foot + 0.05) === currentRoom)) {
     yaw = lastWalk.yaw
     pitch = lastWalk.pitch
     beginWalk([lastWalk.position.x, -lastWalk.position.z], lastWalk.foot)
@@ -512,6 +855,7 @@ function startWalk() {
     }
     return
   }
+  if (currentRoom) return walkIntoRoom(currentRoom)
   const camera = scene.cameras.find((c) => c.type === 'perspective' && c.at && c.look)
   if (camera) walkTo(camera.id)
   else if (scene.rooms.length > 0) beginWalk(centroid(scene.rooms[0].floor), roomElevation(scene, scene.rooms[0]))
@@ -593,17 +937,26 @@ window.addEventListener('keydown', (event) => {
   if (event.ctrlKey || event.metaKey || event.altKey) return
   if (event.code.startsWith('Arrow') || event.code === 'PageUp' || event.code === 'PageDown') event.preventDefault()
   const key = event.key.toLowerCase()
-  if (key === 'c' || key === 'n') cyclePlace(1)
-  else if (key === 'b') cyclePlace(-1)
-  else if (key === 'o') useCamera('orbit')
-  else if (key === 'p') useCamera('plan')
+  // Zoom repeats while the key is held; the rest act once a press.
+  if (key === '+' || key === '=') return zoomBy(0.85)
+  if (key === '-' || key === '_') return zoomBy(1 / 0.85)
+  if (event.repeat) return
+  if (key === 'n' || key === 'b') goToRoom(scene && stepRoom(scene, currentRoom, key === 'n' ? 1 : -1))
+  else if (key === 'c') cyclePlace(1)
+  else if (key === 'p' || key === '1') setMode('plan')
+  else if (key === 'h' || key === 'o' || key === '2') setMode('house')
+  else if (key === 'r' || key === '3') setMode('room')
   else if (key === 'v') startWalk()
+  else if (key === '4') setMode('walk')
+  else if (key === 'g') setWalls(walls === 'low' ? 'glass' : 'low')
+  else if (key === 'u') setUnits(units === 'm' ? 'ft' : 'm')
   else if (key === '[' || key === ']') setCap(Math.min(cap, levels.length - 1) + (key === ']' ? 1 : -1))
-  else if (key === 'h') setQuality(quality === 'high' ? 'fast' : 'high', quality === 'high' ? 'Fast rendering: press H for high quality.' : 'High quality.')
+  else if (key === 'f') setQuality(quality === 'high' ? 'fast' : 'high', quality === 'high' ? 'Fast rendering: press F for high quality.' : 'High quality.')
   else if (key === 'l') {
     labelsOn = !labelsOn
     applyView(view, $('camera').textContent ?? '')
-  } else if (event.key === '?') $('help').classList.toggle('hidden')
+  } else if (event.key === '?') showHelp($('help').classList.contains('hidden'))
+  else if (event.key === 'Escape') showHelp(false)
 })
 window.addEventListener('keyup', (event) => keys.delete(event.code))
 window.addEventListener('blur', () => keys.clear())
@@ -629,8 +982,10 @@ window.addEventListener('mousemove', (event) => {
 window.addEventListener('mouseup', () => {
   setTimeout(() => (dragging = undefined), 0)
 })
-canvas.addEventListener('dblclick', () => {
+// A double-click in Plan or House mode opens the room under it in Room mode.
+canvas.addEventListener('dblclick', (event) => {
   if (view === 'walk') canvas.requestPointerLock?.()
+  else if (view === 'plan' || modeOf(view) === 'house') enterRoom(roomAtPointer(event))
 })
 document.addEventListener('pointerlockchange', () => document.body.classList.toggle('locked', locked()))
 let touch: { x: number; y: number } | undefined
@@ -644,11 +999,10 @@ canvas.addEventListener('touchmove', (event) => {
   touch = { x: event.touches[0].clientX, y: event.touches[0].clientY }
 }, { passive: true })
 
-// The places a scene names, in file order, with the level each stands on.
-function places(): { id: string; name: string; level: number }[] {
-  return (scene ? allCameras(scene) : [])
-    .filter((c) => c.type === 'perspective' && c.at && c.look)
-    .map((c) => ({ id: c.id, name: placeName(c.id), level: Math.max(0, levels.findIndex((l, i) => c.at![2] >= l.elevation - 0.3 && (!levels[i + 1] || c.at![2] < levels[i + 1].elevation - 0.3))) }))
+// The places a scene names, in file order, with the room each stands in.
+function places(): { id: string; name: string; room?: string }[] {
+  if (!scene) return []
+  return scene.cameras.filter((c) => c.type === 'perspective' && c.at && c.look).map((c) => ({ id: c.id, name: placeName(c.id), room: roomUnder(scene!, [c.at![0], c.at![1]], c.at![2]) }))
 }
 
 function placeName(id: string): string {
@@ -664,40 +1018,34 @@ function cyclePlace(step: number) {
   walkTo(list[(index + step + list.length) % list.length].id)
 }
 
-// The sidebar: walk, the two overviews, the levels, and every place the
-// scene names, grouped by level, with previous and next.
+// The sidebar: which levels show, every room in the scene's order with
+// previous and next, and the places that stand outside any room (a room's
+// own places are in its panel).
 function buildSidebar() {
+  if (!scene) return
   const menu = $('menu')
-  menu.innerHTML = ''
-  const button = (text: string, camera: string, onClick: () => void, className = '') => {
+  menu.replaceChildren()
+  const button = (text: string, onClick: () => void, title?: string) => {
     const b = document.createElement('button')
+    b.type = 'button'
     b.textContent = text
-    b.dataset.camera = camera
-    b.className = className
+    if (title) b.title = title
     b.addEventListener('click', onClick)
     return b
   }
-  const section = (title: string) => {
+  const heading = (text: string, className = 'section') => {
     const h = document.createElement('div')
-    h.className = 'section'
-    h.textContent = title
+    h.className = className
+    h.textContent = text
     menu.append(h)
   }
 
-  section('Look around')
-  menu.append(button('Walk inside', 'walk', () => startWalk(), 'walk'))
-  const steps = document.createElement('div')
-  steps.className = 'row'
-  steps.append(button('‹ Previous', 'prev', () => cyclePlace(-1)), button('Next ›', 'next', () => cyclePlace(1)))
-  menu.append(steps)
-
-  section('From above')
-  menu.append(button('Overview', 'orbit', () => useCamera('orbit')))
-  menu.append(button('Plan', 'plan', () => useCamera('plan')))
   if (levels.length > 1) {
+    heading('Levels')
     const select = document.createElement('select')
     select.id = 'levels'
     select.title = 'Show this level and the ones below it ([ and ] keys)'
+    select.setAttribute('aria-label', 'Levels shown')
     levels.forEach((level, index) => {
       const option = document.createElement('option')
       option.value = String(index)
@@ -709,46 +1057,98 @@ function buildSidebar() {
     menu.append(select)
   }
 
-  const list = places()
-  if (list.length > 0) {
-    section('Places')
-    let lastLevel = -1
-    for (const place of list) {
-      if (levels.length > 1 && place.level !== lastLevel) {
-        const h = document.createElement('div')
-        h.className = 'level'
-        h.textContent = levels[place.level]?.name ?? levels[place.level]?.id ?? ''
-        menu.append(h)
-        lastLevel = place.level
+  if (scene.rooms.length > 0) {
+    heading('Rooms')
+    const steps = document.createElement('div')
+    steps.className = 'row'
+    const step = (by: number) => () => goToRoom(scene && stepRoom(scene, currentRoom, by))
+    steps.append(button('‹ Previous', step(-1), 'Previous room (B)'), button('Next ›', step(1), 'Next room (N)'))
+    menu.append(steps)
+    // Headed by level when each level's rooms come together; a tour that
+    // goes up and down a split-level house would repeat them every few rooms.
+    const runs = scene.rooms.filter((r, i) => i === 0 || r.level !== scene!.rooms[i - 1].level).map((r) => r.level)
+    const grouped = levels.length > 1 && new Set(runs).size === runs.length
+    let lastLevel: string | undefined
+    for (const room of scene.rooms) {
+      if (grouped && room.level !== lastLevel) {
+        const level = levels.find((l) => l.id === room.level)
+        heading(level?.name ?? level?.id ?? room.level, 'level')
+        lastLevel = room.level
       }
-      menu.append(button(place.name, place.id, () => walkTo(place.id)))
+      const b = button(roomName(room), () => goToRoom(room.id))
+      b.dataset.room = room.id
+      menu.append(b)
+    }
+  }
+
+  const outside = places().filter((p) => !p.room)
+  if (outside.length > 0) {
+    heading('Places')
+    for (const place of outside) {
+      const b = button(place.name, () => walkTo(place.id))
+      b.dataset.place = place.id
+      menu.append(b)
     }
   }
 }
-$('menu-toggle').addEventListener('click', () => $('sidebar').classList.toggle('collapsed'))
+$('menu-toggle').addEventListener('click', () => {
+  const collapsed = $('sidebar').classList.toggle('collapsed')
+  $('menu-toggle').setAttribute('aria-expanded', String(!collapsed))
+})
+for (const button of document.querySelectorAll<HTMLButtonElement>('#modes button')) button.addEventListener('click', () => setMode(button.dataset.mode as Mode))
 
 // ---- Selecting and showing -------------------------------------------------
 
 // Click an item to learn its id, so a person can say "move the sofa" and
 // the agent knows exactly which entity that is.
+// In Plan and House modes the click picks the room under it too; a room
+// itself is not selected, since the room panel already says what it is.
 const raycaster = new THREE.Raycaster()
+let pressed: { x: number; y: number } | undefined
+canvas.addEventListener('pointerdown', (event) => {
+  pressed = { x: event.clientX, y: event.clientY }
+  flight = undefined
+})
+canvas.addEventListener('wheel', () => (flight = undefined), { passive: true })
 canvas.addEventListener('click', (event) => {
-  if (!built || locked() || (dragging && dragging.moved > 6)) return
-  const rect = canvas.getBoundingClientRect()
-  const pointer = new THREE.Vector2(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1)
-  raycaster.setFromCamera(pointer, active)
+  if (!built || !scene || locked() || (dragging && dragging.moved > 6)) return
+  // The end of a drag that circled the house is not a click.
+  if (pressed && Math.hypot(event.clientX - pressed.x, event.clientY - pressed.y) > 5) return
+  const hits = hitsAt(event)
+  if (view === 'plan' || modeOf(view) === 'house') {
+    const room = hits[0] && roomUnder(scene, [hits[0].point.x, -hits[0].point.z], hits[0].point.y + 0.05)
+    if (room) pickRoom(room)
+  }
   const ids = new Set(built.entities.keys())
-  for (const hit of raycaster.intersectObjects(built.root.children, true)) {
-    if (!hit.object.visible) continue
+  for (const hit of hits) {
     let object: THREE.Object3D | null = hit.object
     while (object && !(object.name && ids.has(object.name))) object = object.parent
-    if (object) return select(object.name)
+    if (object) return select(scene.rooms.some((r) => r.id === object!.name) ? undefined : object.name)
   }
   select(undefined)
 })
 
+// What a point on the screen hits, nearest first, of what is shown.
+function hitsAt(event: MouseEvent): THREE.Intersection[] {
+  if (!built) return []
+  const rect = canvas.getBoundingClientRect()
+  const pointer = new THREE.Vector2(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1)
+  raycaster.setFromCamera(pointer, active)
+  const shown = (object: THREE.Object3D) => {
+    for (let o: THREE.Object3D | null = object; o; o = o.parent) if (!o.visible) return false
+    return true
+  }
+  return raycaster.intersectObjects(built.root.children, true).filter((hit) => shown(hit.object))
+}
+
 function select(id: string | undefined) {
   selected = id
+  describe(id)
+  if (id) highlight([id], 1600)
+}
+
+// The selection panel: the thing's id and what it is, in the person's units.
+function describe(id: string | undefined) {
   const panel = $('selection')
   if (!id || !scene) {
     panel.classList.add('hidden')
@@ -760,17 +1160,16 @@ function select(id: string | undefined) {
   const object = scene.objects.find((o) => o.id === id)
   const size = item ? (findAsset(item.asset)?.size ?? item.size) : undefined
   const detail = item
-    ? `${findAsset(item.asset)?.name ?? item.asset} in ${item.room} at [${item.at.join(', ')}]${size ? `, ${size.map((n) => n.toFixed(2)).join(' × ')} m` : ''}`
+    ? `${findAsset(item.asset)?.name ?? item.asset} in ${item.room} at [${item.at.join(', ')}]${size ? `, ${formatSize(size, units)}` : ''}`
     : room
       ? `room${room.name ? `, ${room.name}` : ''}`
       : opening
-        ? `${opening.type} on ${opening.wall.room} edge ${opening.wall.edge}, ${opening.width} m wide`
+        ? `${opening.type} on ${opening.wall.room} edge ${opening.wall.edge}, ${formatLength(opening.width, units)} wide`
         : object
           ? `${object.kind}${object.name ? `, ${object.name}` : ''} at [${object.at.join(', ')}]${object.parent ? ` in ${object.parent}` : ''}`
           : ''
   panel.innerHTML = `<code>${escape(id)}</code> ${escape(detail)}`
   panel.classList.remove('hidden')
-  highlight([id], 1600)
 }
 
 function highlight(ids: string[], duration: number) {
@@ -858,6 +1257,8 @@ async function load(first: boolean): Promise<void> {
   const changed = first ? [] : [...fingerprints].filter(([id, json]) => previous.get(id) !== json).map(([id]) => id)
   previous = fingerprints
 
+  // Room mode's changes belong to the old build.
+  if (view === 'room') leaveRoomMode()
   if (built) world.remove(built.root)
   scene = next
   levels = levelsByElevation(next)
@@ -894,13 +1295,25 @@ async function load(first: boolean): Promise<void> {
     resize()
     const wanted = levelIndexOf(params.get('level'))
     if (wanted !== undefined) cap = wanted >= levels.length - 1 ? Infinity : wanted
-    if (!restoreView()) useCamera(params.get('camera') ?? (headless ? 'orbit' : (places()[0]?.id ?? 'orbit')))
+    const room = params.get('room')
+    if (!restoreView()) {
+      if (room && next.rooms.some((r) => r.id === room)) enterRoom(room)
+      else useCamera(params.get('camera') ?? 'orbit')
+    }
+    landed = true
   } else {
+    // The current room is gone from the scene: back out to the house.
+    if (currentRoom && !next.rooms.some((r) => r.id === currentRoom)) {
+      currentRoom = undefined
+      if (view === 'room') showHouse()
+    }
     fitPlan()
     applyView(view, $('camera').textContent ?? '')
     if (changed.length > 0) highlight(changed, 2500)
     if (selected && !fingerprints.has(selected)) select(undefined)
   }
+  ;($('modes').querySelector('[data-mode="room"]') as HTMLButtonElement).disabled = next.rooms.length === 0
+  showCurrentRoom()
   lastUpdate = Date.now()
   setStatus(changed.length > 0 ? `Changed: ${changed.map((id) => `<code>${escape(id)}</code>`).join(', ')}` : '')
   if (!first) {
@@ -915,15 +1328,17 @@ const stateKey = `stage:view:${scenePath}`
 function saveView() {
   if (headless || !scene) return
   try {
-    sessionStorage.setItem(stateKey, JSON.stringify({ view, label: $('camera').textContent, position: perspective.position.toArray(), target: orbit.target.toArray(), fov: perspective.fov, cap: cap === Infinity ? null : cap, planLevel, yaw, pitch, foot, place: currentPlace }))
+    sessionStorage.setItem(stateKey, JSON.stringify({ view, label: $('camera').textContent, position: perspective.position.toArray(), target: orbit.target.toArray(), fov: perspective.fov, cap: cap === Infinity ? null : cap, planLevel, yaw, pitch, foot, place: currentPlace, room: currentRoom }))
   } catch {}
 }
 function restoreView(): boolean {
-  if (headless || params.has('camera')) return false
+  if (headless || params.has('camera') || params.has('room')) return false
   try {
-    const saved = JSON.parse(sessionStorage.getItem(stateKey) ?? 'null') as { view: View; label: string; position: number[]; target: number[]; fov: number; cap: number | null; planLevel?: number; yaw?: number; pitch?: number; foot?: number; place?: string } | null
+    const saved = JSON.parse(sessionStorage.getItem(stateKey) ?? 'null') as { view: View; label: string; position: number[]; target: number[]; fov: number; cap: number | null; planLevel?: number; yaw?: number; pitch?: number; foot?: number; place?: string; room?: string } | null
     if (!saved) return false
     cap = saved.cap === null || saved.cap === undefined ? Infinity : saved.cap
+    currentRoom = scene?.rooms.some((r) => r.id === saved.room) ? saved.room : undefined
+    if (saved.view === 'room' && !currentRoom) return false
     if (saved.view === 'plan') {
       useCamera(`plan:${levels[saved.planLevel ?? levels.length - 1]?.id ?? ''}`)
       return true
@@ -1003,9 +1418,15 @@ const lastView = new THREE.Matrix4()
 let stillSince = 0
 function frame() {
   const delta = Math.min(clock.getDelta(), 0.1)
-  if (view === 'walk') walkStep(delta)
-  else if (orbit.enabled) orbit.update()
   const now = performance.now()
+  if (flight) fly(now)
+  else if (view === 'walk') {
+    walkStep(delta)
+    followRoom(now)
+  } else if (orbit.enabled) {
+    keyOrbit(delta)
+    orbit.update()
+  }
   for (let i = highlights.length - 1; i >= 0; i--) {
     const h = highlights[i]
     if (now > h.until) {
@@ -1017,8 +1438,10 @@ function frame() {
   }
   updateInside()
   placeLights(now)
-  if (built) applyCutaway(built.root, active, !inside, active === perspective, view === 'orbit' || view === 'focus', reach(cap))
-  if (view === 'orbit' || view === 'focus') shadowsChanged()
+  if (built && scene && view === 'room' && currentRoom) applyRoomMode(built, scene, currentRoom, walls, perspective)
+  else if (built) applyCutaway(built.root, active, !inside, active === perspective, view === 'orbit' || view === 'focus', reach(cap))
+  if (view === 'orbit' || view === 'focus' || view === 'room') shadowsChanged()
+  showMark()
   showProgress()
   // Ambient occlusion only once the view holds still: moving stays smooth,
   // and the finished picture fills in a fifth of a second after you stop.
@@ -1038,7 +1461,7 @@ function frame() {
   // Slow even without ambient occlusion: draw fewer pixels.
   if (!headless && quality === 'high' && !still) {
     slowFrames = delta > 0.05 ? slowFrames + 1 : Math.max(0, slowFrames - 2)
-    if (slowFrames > 90) setQuality('fast', 'Switched to fast rendering because this machine draws slowly. Press Q for high quality.')
+    if (slowFrames > 90) setQuality('fast', 'Switched to fast rendering because this machine draws slowly. Press F for high quality.')
   }
 }
 
