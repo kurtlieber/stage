@@ -49,6 +49,8 @@ renderer.toneMappingExposure = 1.1
 renderer.shadowMap.enabled = true
 renderer.shadowMap.type = THREE.PCFSoftShadowMap
 renderer.shadowMap.autoUpdate = false
+// PROTOTYPE (dotfiles#664): Room mode clips doors and windows at the cut.
+renderer.localClippingEnabled = true
 
 const world = new THREE.Scene()
 const pmrem = new THREE.PMREMGenerator(renderer)
@@ -351,6 +353,7 @@ function applyView(next: View, label: string) {
   for (const button of document.querySelectorAll<HTMLButtonElement>('#sidebar button[data-camera]')) {
     button.classList.toggle('active', button.dataset.camera === current || (view === 'walk' && button.dataset.camera === 'walk'))
   }
+  if (view === 'room') document.querySelector(`#sidebar button[data-camera="room:${currentRoom}"]`)?.scrollIntoView({ block: 'nearest' })
 }
 
 // Whether the camera stands inside a room, below its ceiling: that, not the
@@ -480,8 +483,9 @@ function enterRoom(id: string) {
   orbit.zoomToCursor = true
   perspective.fov = 45
   perspective.updateProjectionMatrix()
-  applyView('room', `room: ${room.name ?? room.id}`)
-  if (headless || fromWalk) {
+  const level = levels.find((l) => l.id === room.level)
+  applyView('room', `room: ${room.name ?? room.id}${level && levels.length > 1 ? ` · ${level.name ?? level.id}` : ''}`)
+  if (headless || fromWalk || matchMedia('(prefers-reduced-motion: reduce)').matches) {
     flight = undefined
     perspective.position.copy(position)
     orbit.target.copy(target)
@@ -492,12 +496,19 @@ function enterRoom(id: string) {
   select(undefined)
 }
 
-// The order to step through: the scene's own order, for now.
+// Rooms floor by floor, lowest first, in the scene's order within a floor:
+// the order of the list and of N and B.
+function roomOrder() {
+  const rank = (room: Scene['rooms'][number]) => levels.findIndex((l) => l.id === room.level)
+  return [...(scene?.rooms ?? [])].sort((p, q) => rank(p) - rank(q))
+}
+
 function stepRoom(step: number) {
-  if (!scene || scene.rooms.length === 0) return
-  const index = scene.rooms.findIndex((r) => r.id === currentRoom)
-  const next = index < 0 ? (step > 0 ? 0 : scene.rooms.length - 1) : (index + step + scene.rooms.length) % scene.rooms.length
-  enterRoom(scene.rooms[next].id)
+  const order = roomOrder()
+  if (order.length === 0) return
+  const index = order.findIndex((r) => r.id === currentRoom)
+  const next = index < 0 ? (step > 0 ? 0 : order.length - 1) : (index + step + order.length) % order.length
+  enterRoom(order[next].id)
 }
 
 // The room under a point in plan: the one whose floor is nearest below it.
@@ -815,7 +826,18 @@ function buildSidebar() {
     rooms.className = 'row'
     rooms.append(button('‹ Previous', 'room-prev', () => stepRoom(-1)), button('Next ›', 'room-next', () => stepRoom(1)))
     menu.append(rooms)
-    for (const room of scene.rooms) menu.append(button(room.name ?? room.id, `room:${room.id}`, () => enterRoom(room.id)))
+    let lastLevel: string | undefined
+    for (const room of roomOrder()) {
+      if (levels.length > 1 && room.level !== lastLevel) {
+        const h = document.createElement('div')
+        h.className = 'level'
+        const level = levels.find((l) => l.id === room.level)
+        h.textContent = level?.name ?? level?.id ?? ''
+        menu.append(h)
+        lastLevel = room.level
+      }
+      menu.append(button(room.name ?? room.id, `room:${room.id}`, () => enterRoom(room.id)))
+    }
   }
 
   const list = places()

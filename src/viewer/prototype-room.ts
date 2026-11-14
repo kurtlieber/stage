@@ -25,16 +25,34 @@ const CUT = new THREE.MeshBasicMaterial({ color: '#2b2622' })
 const GHOST = new THREE.MeshStandardMaterial({ color: '#e4ecf2', transparent: true, opacity: 0.16, depthWrite: false, roughness: 0.15 })
 const MUTED = new THREE.MeshStandardMaterial({ color: '#cfccc6', roughness: 0.95 })
 
-type Look = 'full' | 'cut' | 'ghost' | 'muted'
-const originals = new Map<THREE.Mesh, THREE.Material | THREE.Material[]>()
+// Doors and windows in a cut wall are clipped at the cut, not hidden, so
+// they read like a drawn plan. One plane: Room mode has one cut height.
+const CLIP = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0)
+const clippedCopies = new Map<THREE.Material, THREE.Material>()
+function clipped(material: THREE.Material) {
+  let copy = clippedCopies.get(material)
+  if (!copy) {
+    copy = material.clone()
+    copy.clippingPlanes = [CLIP]
+    copy.clipShadows = true
+    clippedCopies.set(material, copy)
+  }
+  return copy
+}
+
+type Look = 'full' | 'cut' | 'ghost' | 'muted' | 'clip'
+const originals = new Map<THREE.Mesh, { material: THREE.Material | THREE.Material[]; castShadow: boolean }>()
 
 function setLook(mesh: THREE.Mesh, look: Look) {
   if ((mesh.userData.look ?? 'full') === look) return
-  if (!originals.has(mesh)) originals.set(mesh, mesh.material)
-  const original = originals.get(mesh)!
+  if (!originals.has(mesh)) originals.set(mesh, { material: mesh.material, castShadow: mesh.castShadow })
+  const { material: original, castShadow } = originals.get(mesh)!
+  mesh.castShadow = look === 'ghost' ? false : castShadow
   if (look === 'full') {
     mesh.material = original
     originals.delete(mesh)
+  } else if (look === 'clip') {
+    mesh.material = Array.isArray(original) ? original.map(clipped) : clipped(original)
   } else if (look === 'cut' && Array.isArray(original)) {
     // Box faces: +x, -x, +y (the top, where the cut shows), -y, +z, -z.
     const faces = original.slice()
@@ -45,14 +63,13 @@ function setLook(mesh: THREE.Mesh, look: Look) {
   } else if (look === 'muted') {
     mesh.material = MUTED
   }
-  mesh.castShadow = look !== 'ghost'
   mesh.userData.look = look
 }
 
 export function leaveRoomMode() {
-  for (const [mesh, material] of originals) {
+  for (const [mesh, { material, castShadow }] of originals) {
     mesh.material = material
-    mesh.castShadow = true
+    mesh.castShadow = castShadow
     mesh.userData.look = 'full'
   }
   originals.clear()
@@ -65,8 +82,15 @@ export function leaveRoomMode() {
 function cutTo(group: THREE.Object3D, height: number, look: Look, floor: number) {
   let standing = false
   for (const child of group.children) {
-    if (child.userData.opening || child.userData.roof) {
+    if (child.userData.roof) {
       child.visible = height === Infinity
+      continue
+    }
+    if (child.userData.opening) {
+      child.visible = true
+      child.traverse((o) => {
+        if (o instanceof THREE.Mesh) setLook(o, height === Infinity ? 'full' : 'clip')
+      })
       continue
     }
     const cut = child.userData.cutaway as { bottom: number; top: number; base: number } | undefined
@@ -88,6 +112,7 @@ export function applyRoomMode(built: Built, scene: Scene, roomId: string, varian
   const room = scene.rooms.find((r) => r.id === roomId)
   if (!room) return
   const floor = roomElevation(scene, room)
+  CLIP.constant = floor + (variant === 'C' ? SECTION : STRIP)
   const eye: Point = [camera.position.x, -camera.position.z]
   const centre = centroid(room.floor)
   const rooms = new Set(scene.rooms.map((r) => r.id))
@@ -118,11 +143,8 @@ export function applyRoomMode(built: Built, scene: Scene, roomId: string, varian
       if ((centre[0] - mid[0]) * n[0] + (centre[1] - mid[1]) * n[1] > 0) n = [-n[0], -n[1]]
       const near = (eye[0] - mid[0]) * n[0] + (eye[1] - mid[1]) * n[1] > 0.05
       if (variant === 'A') cutTo(child, near ? floor + STRIP : Infinity, 'full', floor)
-      else {
-        cutTo(child, Infinity, near ? 'ghost' : 'full', floor)
-        // Doors and windows in a glass wall stay, so you see where they are.
-        for (const part of child.children) if (part.userData.opening) part.visible = true
-      }
+      // Doors and windows in a glass wall stay, so you see where they are.
+      else cutTo(child, Infinity, near ? 'ghost' : 'full', floor)
       continue
     }
     if (overlays.has(child as THREE.Mesh)) {
