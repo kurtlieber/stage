@@ -81,6 +81,22 @@ export async function saveTo(url: string, path: string, headers: Record<string, 
   await rename(`${path}.tmp`, path)
 }
 
+// The name a fetched file is saved under, from the path its source gives.
+// Icosa gives some names URL-encoded ("Office%20chair.bin"), as a glTF's own
+// URIs are, and the viewer asks for the decoded name, so the file on disk
+// must carry it. A name that leaves the model's folder is refused.
+export function fileName(relative: string): string {
+  let name = relative
+  try {
+    name = decodeURIComponent(relative)
+  } catch {
+    // Not URL-encoded: a stray % stays as it is.
+  }
+  name = name.replace(/\\/g, '/')
+  if (name.startsWith('/') || /^[a-z]:/i.test(name) || name.split('/').some((part) => part === '..')) throw new Error(`${relative}: the model names a file outside its folder`)
+  return name
+}
+
 // A file name a source's id can become.
 export const slug = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || createHash('md5').update(text).digest('hex').slice(0, 8)
 
@@ -155,7 +171,7 @@ const polyhaven: ModelSource = {
     if (!entry) throw new Error(`${hit.id} has no glTF`)
     const base = join('models', 'polyhaven', hit.id)
     await saveTo(entry.url, join(folder, base, `${hit.id}.gltf`))
-    await Promise.all(Object.entries(entry.include).map(([path, file]) => saveTo(file.url, join(folder, base, path))))
+    await Promise.all(Object.entries(entry.include).map(([path, file]) => saveTo(file.url, join(folder, base, fileName(path)))))
     return `${base}/${hit.id}.gltf`
   },
 }
@@ -311,9 +327,9 @@ const icosa: ModelSource = {
     }
     const chosen = gltf ?? glb
     if (!chosen) throw new Error(`${hit.id}: no glTF format`)
-    const rootName = chosen.root.relativePath ?? 'model.gltf'
+    const rootName = fileName(chosen.root.relativePath ?? 'model.gltf')
     await saveTo(chosen.root.url, join(folder, base, rootName))
-    await Promise.all(((chosen.resources ?? []) as any[]).map((r) => saveTo(r.url, join(folder, base, r.relativePath ?? r.url.split('/').pop()))))
+    await Promise.all(((chosen.resources ?? []) as any[]).map((r) => saveTo(r.url, join(folder, base, fileName(r.relativePath ?? r.url.split('/').pop())))))
     return `${base}/${rootName}`
   },
 }
