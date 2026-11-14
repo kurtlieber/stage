@@ -140,6 +140,8 @@ library assets placed by their center in a room and turned by `facing`.
 Several floors: each level has an `elevation`, a `height`, and a floor
 `slab`; rooms stack on their own, a tall room beside a short one gets the
 right walls, and `well: true` leaves the hole a stair comes up through.
+`grade: true` makes a split level, a few steps up or down, that stands on
+the ground beside the storey instead of over it.
 Stairs are items (`stairs/horseshoe`, `stairs/straight`) that a person
 climbs when walking. `open: true` makes a terrace, a roof, or a garden,
 with a parapet where nothing else stands. A level can carry a `plan`

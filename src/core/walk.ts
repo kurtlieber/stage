@@ -1,5 +1,5 @@
 import { findAsset } from './assets.ts'
-import { alongWall, levelsByElevation, pointInPolygon, roomElevation, wallPieces, walls, type Point, sceneBounds } from './geometry.ts'
+import { alongWall, levelAbove, pointInPolygon, roomElevation, wallPieces, walls, type Point, sceneBounds } from './geometry.ts'
 import { footprintCorners, placeObjects } from './objects.ts'
 import type { Scene } from './schema.ts'
 import { stair, type Stair } from './stairs.ts'
@@ -82,11 +82,9 @@ export function obstacles(scene: Scene): Obstacles {
 
 // From a level's floor to the next level's floor, or to its own roof.
 export function floorToFloor(scene: Scene, levelId: string): number {
-  const ordered = levelsByElevation(scene)
-  const index = ordered.findIndex((l) => l.id === levelId)
-  const level = ordered[index]
+  const level = scene.levels.find((l) => l.id === levelId)
   if (!level) return 2.7
-  const above = ordered[index + 1]
+  const above = levelAbove(scene, level)
   return above ? above.elevation - level.elevation : level.height + level.slab
 }
 

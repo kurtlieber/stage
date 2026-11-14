@@ -117,6 +117,14 @@ stands in rooms, levels stack. A scene with no rooms is fine.
   and `slab` (its floor slab, below the elevation). Put the next level at
   elevation + height + slab. A room's `level` places it; a room on the
   lowest level with closed rooms stands on the ground, plinth and all.
+- A split level, a few steps up or down within the storey on the ground (a
+  sunken living room, a raised wing, a porch): give it `grade: true`. It
+  stands on the ground beside the other levels, not over them: its walls go
+  down to the ground and a raised floor is solid down to it. Give it the
+  `height` that puts its ceiling where its neighbors' is.
+- Nothing is drawn below the ground at 0. When a drawing marks floors below
+  its ±0.00, put the lowest at 0, raise the rest by as much, and name each
+  level by the drawing's own mark.
 - Rooms on different levels may share edges: walls stack on their own. A
   tall room (`height` of two floors) beside a normal one gets the right wall
   above its neighbor's ceiling.

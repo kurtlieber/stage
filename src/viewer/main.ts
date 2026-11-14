@@ -8,7 +8,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js'
 import { findAsset } from '../core/assets.ts'
 import { check, type Problem } from '../core/check.ts'
 import { allCameras, findCamera } from '../core/cameras.ts'
-import { centroid, levelsByElevation, pointInPolygon, roomElevation, roomHeight, sceneBounds, type Point } from '../core/geometry.ts'
+import { centroid, levelsByElevation, pointInPolygon, roomElevation, roomHeight, sceneBounds, storeys, type Point } from '../core/geometry.ts'
 import { STEP, ground, obstacles, resolve as resolveWalk, type Obstacles } from '../core/walk.ts'
 import { SKY } from '../core/materials.ts'
 import type { Scene } from '../core/schema.ts'
@@ -70,7 +70,7 @@ function placeLights(now: number) {
   lightsPlaced = now
   const eye = perspective.position
   const nearest = built.fixtures
-    .filter((f) => f.level <= cap && Math.abs(f.position.y - eye.y) < 4.5)
+    .filter((f) => f.level <= reach(cap) && Math.abs(f.position.y - eye.y) < 4.5)
     .map((f) => ({ f, d: f.position.distanceToSquared(eye) }))
     .sort((p, q) => p.d - q.d)
     .slice(0, LIGHT_POOL)
@@ -210,6 +210,8 @@ let scene: Scene | undefined
 // Levels from the lowest up, and the highest one shown: everything above
 // it is hidden, so an overview or a plan looks into that floor.
 let levels: Scene['levels'] = []
+// Each level's storey, by its index in levels.
+let storeyIndex: number[] = []
 let cap = Infinity
 let planLevel = 0
 let built: Built | undefined
@@ -234,7 +236,8 @@ window.addEventListener('resize', resize)
 function fitPlan() {
   if (!scene) return
   const b = sceneBounds(scene)
-  const level = levels[Math.min(planLevel, levels.length - 1)]
+  // The top of the plan's storey, split levels and all.
+  const level = levels[Math.min(reach(planLevel), levels.length - 1)]
   const margin = 1
   const cx = (b.min[0] + b.max[0]) / 2
   const cy = (b.min[1] + b.max[1]) / 2
@@ -261,22 +264,35 @@ function fitPlan() {
 function applyLevelCap() {
   if (!built) return
   shadowsChanged()
+  const shown = reach(cap)
   const show = (object: THREE.Object3D) => {
     const level = object.userData.level as number | undefined
-    if (level !== undefined) object.visible = level <= cap
+    if (level !== undefined) object.visible = level <= shown
   }
   for (const child of built.root.children) if (!child.userData.wall) show(child)
-  // A plan labels its own level; the overview labels every level it shows.
-  // A plan labels its own level; the overview labels the highest level it
-  // shows, so a tall house isn't buried in tags.
-  const top = view === 'plan' ? planLevel : Math.min(cap, levels.length - 1)
+  // A plan labels its own storey; the overview labels the highest storey it
+  // shows, so a tall house isn't buried in tags. A storey's split levels
+  // count as one.
+  const top = storeyOf(view === 'plan' ? planLevel : Math.min(cap, levels.length - 1))
   for (const label of built.labels.children) {
     const level = label.userData.level as number | undefined
-    label.visible = level === undefined || level === top
+    label.visible = level === undefined || storeyOf(level) === top
   }
-  for (const [id, overlay] of built.overlays) overlay.visible = view === 'plan' && levels[planLevel]?.id === id
+  for (const [id, overlay] of built.overlays) overlay.visible = view === 'plan' && storeyOf(levelIndexOf(id) ?? -1) === storeyOf(planLevel)
   const select = document.querySelector<HTMLSelectElement>('#levels')
   if (select) select.value = String(Math.min(cap, levels.length - 1))
+}
+
+function storeyOf(index: number): number {
+  return storeyIndex[index] ?? index
+}
+
+// The highest level a cap shows: the top of the cap's storey, so a split
+// level a few steps up shows with the rest of its floor.
+function reach(index: number): number {
+  if (index === Infinity) return Infinity
+  const storey = storeyIndex[index]
+  return storey === undefined ? index : storeyIndex.lastIndexOf(storey)
 }
 
 function levelIndexOf(id: string | null | undefined): number | undefined {
@@ -845,6 +861,7 @@ async function load(first: boolean): Promise<void> {
   if (built) world.remove(built.root)
   scene = next
   levels = levelsByElevation(next)
+  storeyIndex = storeys(next)
   if (cap !== Infinity && cap >= levels.length - 1) cap = Infinity
   planLevel = Math.min(planLevel, levels.length - 1)
   built = buildScene(next, { fileUrl: (relative) => (bundled ? `./files/${relative}` : `./files/${btoa(unescape(encodeURIComponent(scenePath))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')}/${relative.split('/').map(encodeURIComponent).join('/')}`) })
@@ -1000,7 +1017,7 @@ function frame() {
   }
   updateInside()
   placeLights(now)
-  if (built) applyCutaway(built.root, active, !inside, active === perspective, view === 'orbit' || view === 'focus', cap)
+  if (built) applyCutaway(built.root, active, !inside, active === perspective, view === 'orbit' || view === 'focus', reach(cap))
   if (view === 'orbit' || view === 'focus') shadowsChanged()
   showProgress()
   // Ambient occlusion only once the view holds still: moving stays smooth,

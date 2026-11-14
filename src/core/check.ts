@@ -1,5 +1,5 @@
 import { findAsset } from './assets.ts'
-import { DEFAULT_SILL, area, edges, levelsByElevation, pointInPolygon, roomElevation, roomHeight, type Point } from './geometry.ts'
+import { DEFAULT_SILL, area, edges, levelAbove, levelsByElevation, pointInPolygon, roomElevation, roomHeight, type Point } from './geometry.ts'
 import { MATERIALS } from './materials.ts'
 import { sliderLayout } from './slider.ts'
 import { stair } from './stairs.ts'
@@ -204,7 +204,8 @@ function spatial(scene: Scene): Problem[] {
   const ordered = levelsByElevation(scene)
   ordered.forEach((level, i) => {
     const below = ordered[i - 1]
-    if (!below) return
+    // A grade level stands beside the others, a few steps up or down.
+    if (!below || level.grade) return
     const top = below.elevation + below.height + level.slab
     if (level.elevation < top - 1e-6) {
       problems.push({
@@ -442,14 +443,13 @@ function spatial(scene: Scene): Problem[] {
 
   // A stair climbing under the floor above needs 2 m of headroom on every
   // step, unless that floor has a well over the stair.
-  const stacked = levelsByElevation(scene)
   scene.items.forEach((item, index) => {
     const info = findAsset(item.asset)
     const room = rooms.get(item.room)
     if (!info || info.category !== 'stairs' || !room) return
     const size = item.size ?? info.size
-    const levelIndex = stacked.findIndex((l) => l.id === room.level)
-    const above = stacked[levelIndex + 1]
+    const level = scene.levels.find((l) => l.id === room.level)
+    const above = level && levelAbove(scene, level)
     if (!above) return
     const rise = item.size?.[2] ?? floorToFloor(scene, room.level)
     const base = roomElevation(scene, room) + item.elevation

@@ -35,6 +35,10 @@ export const Level = z.object({
   // Thickness of this level's floor slab, below its elevation. Walls of
   // the level below rise through it; the lowest level has none.
   slab: z.number().min(0).default(0.15),
+  // A split level of the storey on the ground, a few steps up or down from
+  // it (a sunken living room, a raised wing): it stands on the ground beside
+  // the other levels, not over them.
+  grade: z.boolean().default(false),
   plan: Plan.optional(),
   // A pitched roof over this level's rooms, ridge along their longer side;
   // without it the top is flat. `pitch` in degrees, `overhang` in meters.
@@ -225,7 +229,7 @@ export type ObjectKind = SceneObject['kind']
 // way the schema does and a diff shows only real changes.
 export const KEY_ORDER: Record<string, string[]> = {
   scene: ['stage', 'name', 'units', 'levels', 'rooms', 'openings', 'items', 'objects', 'lights', 'cameras', 'materials'],
-  level: ['id', 'name', 'elevation', 'height', 'slab', 'plan', 'roof'],
+  level: ['id', 'name', 'elevation', 'height', 'slab', 'grade', 'plan', 'roof'],
   plan: ['image', 'scale', 'origin', 'opacity'],
   room: ['id', 'level', 'name', 'floor', 'height', 'open', 'parapet', 'well', 'ceiling', 'thickness', 'materials'],
   opening: ['id', 'wall', 'at', 'type', 'width', 'height', 'sill', 'swing'],

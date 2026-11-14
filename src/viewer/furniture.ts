@@ -156,6 +156,23 @@ const BUILDERS: Record<string, Builder> = {
     box(g, WHITE, w, 0.03, d, 0, h - 0.03, 0)
     return g
   },
+  'table/desk-to-measure': ([w, d, h]) => {
+    const g = new THREE.Group()
+    legs(g, METAL, w, d, h - 0.03, 0.05, 0.035)
+    box(g, WHITE, w, 0.03, d, 0, h - 0.03, 0)
+    return g
+  },
+  'cabinet/credenza': ([w, d, h]) => {
+    // Wood doors on a dark plinth, under a dark top; the front faces -z.
+    const g = new THREE.Group()
+    const plinth = 0.08
+    box(g, MATTE_BLACK, w - 0.04, plinth, d - 0.06, 0, 0, 0.03)
+    box(g, WOOD, w, h - plinth - 0.03, d - 0.02, 0, plinth, 0.01)
+    box(g, WOOD_DARK, w + 0.01, 0.03, d, 0, h - 0.03, 0)
+    const doors = Math.max(1, Math.round(w / 0.5))
+    for (let i = 1; i < doors; i++) box(g, WOOD_DARK, 0.004, h - plinth - 0.09, 0.004, -w / 2 + (i * w) / doors, plinth + 0.03, -d / 2 + 0.01)
+    return g
+  },
   'bed/double': bed,
   'bed/single': bed,
   'plant/fiddle-leaf': ([w, , h]) => {

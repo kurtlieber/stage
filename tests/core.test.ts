@@ -6,11 +6,11 @@ import { test } from 'node:test'
 import { measureGltf } from '../src/cli/assets.ts'
 import { searchAssets } from '../src/core/assets.ts'
 import { check } from '../src/core/check.ts'
-import { distanceToSegment, walls, wallPieces } from '../src/core/geometry.ts'
+import { distanceToSegment, slabAbove, storeys, walls, wallPieces } from '../src/core/geometry.ts'
 import { query } from '../src/core/query.ts'
 import { materialSpec } from '../src/core/materials.ts'
 import { format, readScene, writeScene } from '../src/core/store.ts'
-import { BODY_RADIUS, ground, obstacles, resolve } from '../src/core/walk.ts'
+import { BODY_RADIUS, floorToFloor, ground, obstacles, resolve } from '../src/core/walk.ts'
 
 const example = async () => (await readScene(new URL('../examples/flat/scene.json', import.meta.url).pathname)) as any
 const clone = <T>(value: T): T => structuredClone(value)
@@ -103,6 +103,8 @@ test('writes are atomic and leave nothing behind', async () => {
 
 test('asset search needs every word to match', () => {
   assert.equal(searchAssets('dining chair').map((a) => a.id)[0], 'chair/dining', 'the curated chair comes first')
+  assert.equal(searchAssets('credenza').map((a) => a.id)[0], 'cabinet/credenza')
+  assert.ok(searchAssets('l-shaped desk').some((a) => a.id === 'table/desk-to-measure'), 'an L desk is built from the desk to measure')
   assert.ok(searchAssets('sofa').length >= 2)
   const small = searchAssets('chair', { maxSize: [0.5, 0.6, 1] })
   assert.ok(small.some((a) => a.id === 'chair/dining'))
@@ -209,6 +211,65 @@ test('an open room gets a parapet only where nothing else stands', async () => {
   for (const w of terrace) if (w.rooms.length === 1) assert.ok(Math.abs(w.height - 1) < 1e-6, `parapet is 1 m, not ${w.height}`)
   // The porch (parapet 0) and the garden (0.5) meet: no wall between open rooms.
   assert.ok(!all.some((w) => w.rooms.includes('porch') && w.rooms.includes('garden')))
+})
+
+// A split-level storey: living on the ground, a bedroom wing 0.6 m up, a
+// porch 0.3 m up, and a first floor over the living room only.
+const splitLevel = (grade: boolean) => ({
+  stage: '0.1',
+  name: 'Split level',
+  levels: [
+    { id: 'lower', elevation: 0, height: 3.6, slab: 0 },
+    { id: 'wing', elevation: 0.6, height: 3.0, slab: 0, grade },
+    { id: 'step', elevation: 0.3, height: 3.3, slab: 0, grade },
+    { id: 'first', elevation: 3.75, height: 2.7, slab: 0.15 },
+  ],
+  rooms: [
+    { id: 'living', level: 'lower', floor: [[0, 0], [5, 0], [5, 4], [0, 4]] },
+    { id: 'bedroom', level: 'wing', floor: [[5, 0], [9, 0], [9, 4], [5, 4]] },
+    { id: 'porch', level: 'step', floor: [[0, -2], [5, -2], [5, 0], [0, 0]], open: true, parapet: 0 },
+    { id: 'study', level: 'first', floor: [[0, 0], [5, 0], [5, 4], [0, 4]] },
+  ],
+  openings: [
+    { id: 'front', wall: { room: 'living', edge: 0 }, at: 1, type: 'door', width: 0.9, height: 2.1 },
+    { id: 'steps-up', wall: { room: 'bedroom', edge: 3 }, at: 1, type: 'opening', width: 1.2, height: 2.4 },
+  ],
+})
+
+test('a grade level stands on the ground beside the storey, not over it', () => {
+  const scene = check(splitLevel(true)).scene!
+  const all = walls(scene)
+  // The bedroom's east wall goes down to the ground, a step up or not, and
+  // up through the first floor's slab like the living room's.
+  const east = all.filter((w) => w.a[0] === 9 && w.b[0] === 9)
+  assert.equal(east.length, 1)
+  assert.equal(east[0].elevation, 0)
+  assert.ok(Math.abs(east[0].elevation + east[0].height - 3.75) < 0.01, `top at the first floor, got ${east[0].elevation + east[0].height}`)
+  // Between living and bedroom: one shared wall from the ground, not a
+  // living-room wall below the bedroom's floor and another above it.
+  const between = all.filter((w) => w.a[0] === 5 && w.b[0] === 5 && w.rooms.includes('bedroom'))
+  assert.equal(between.length, 1)
+  assert.equal(between[0].elevation, 0)
+  assert.deepEqual([...between[0].rooms].sort(), ['bedroom', 'living'])
+  // The first floor is what is above the living room: its slab, its height.
+  const living = scene.rooms.find((r) => r.id === 'living')!
+  assert.equal(slabAbove(scene, living), 0.15)
+  assert.equal(floorToFloor(scene, 'lower'), 3.75)
+  // Neither grade level is "inside" another; the first floor still is checked.
+  assert.ok(!messages(splitLevel(true)).some((m) => /starts at/.test(m)), messages(splitLevel(true)).join('\n'))
+})
+
+test('without grade, the same wing floats on its own floor and check says it starts inside', () => {
+  const scene = check(splitLevel(false)).scene!
+  const east = walls(scene).filter((w) => w.a[0] === 9 && w.b[0] === 9)
+  assert.equal(Math.min(...east.map((w) => w.elevation)), 0.6)
+  assert.ok(messages(splitLevel(false)).some((m) => /"wing" starts at 0.6 m, inside "step"/.test(m)))
+})
+
+test('split levels share the storey they stand in, the floor over them starts the next', () => {
+  // lower 0, step 0.3 and wing 0.6 stand on the ground; first is over them.
+  assert.deepEqual(storeys(check(splitLevel(true)).scene!), [0, 0, 0, 1])
+  assert.deepEqual(storeys(check(splitLevel(false)).scene!), [0, 1, 2, 3])
 })
 
 test('a person climbs the horseshoe stair and cannot step into the well', async () => {
