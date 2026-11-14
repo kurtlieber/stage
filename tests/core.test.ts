@@ -496,7 +496,7 @@ test('query objects gives the world placement of a part', () => {
 })
 
 // Models from the open libraries: the zip reader and the glb measurer.
-import { measureFile, readGltfJson, unzip } from '../src/cli/models.ts'
+import { fileName, measureFile, readGltfJson, unzip } from '../src/cli/models.ts'
 
 test('a zip of glTF unpacks, and a glb measures', async () => {
   const entries = unzip(await readFile(new URL('./fixtures/box.zip', import.meta.url)))
@@ -507,6 +507,18 @@ test('a zip of glTF unpacks, and a glb measures', async () => {
   assert.equal(glb.data.toString('ascii', 0, 4), 'glTF')
   // Width, depth, height: the box is 1 wide (x), 0.5 deep (z), 1 tall (y).
   assert.deepEqual(await measureFile(new URL('./fixtures/box.glb', import.meta.url).pathname), [1, 0.5, 1])
+})
+
+test('a fetched file is saved under its decoded name, inside its folder', () => {
+  // Icosa names some files URL-encoded; the glTF asks for the decoded name.
+  assert.equal(fileName('Office%20chair.bin'), 'Office chair.bin')
+  assert.equal(fileName('Office chair.gltf'), 'Office chair.gltf')
+  assert.equal(fileName('textures/oak_diff_1k.jpg'), 'textures/oak_diff_1k.jpg')
+  assert.equal(fileName('textures\\oak.jpg'), 'textures/oak.jpg')
+  assert.equal(fileName('100%.png'), '100%.png')
+  for (const bad of ['../scene.json', '..%2Fscene.json', 'a/../../b.bin', '/etc/passwd', '%2Fetc%2Fpasswd', 'C:/x.bin']) {
+    assert.throws(() => fileName(bad), /outside its folder/, bad)
+  }
 })
 
 // Framing cameras: object:<id> from any side, and the turntable.
