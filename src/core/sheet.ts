@@ -24,8 +24,11 @@ const SCALES = [20, 50, 100, 200, 250, 500, 1000, 2000, 5000, 10000]
 // Zone tints in the order zones sort: blue, rose, amber, then more.
 export const ZONE_COLORS = ['#4f75d0', '#d9506f', '#e3ac2a', '#3e9a6c', '#8b62c9', '#d9793c', '#2f9cab', '#7f8a2c']
 const FONT = "Inter, 'Helvetica Neue', Arial, 'DejaVu Sans', sans-serif"
-// A character's width, as a share of its size, for fitting names.
-const CHAR = 0.6
+// A character's width, as a share of its size, for fitting names: DejaVu
+// Sans, the widest font the stack falls back to.
+const CHAR = 0.66
+// How far a name keeps from the walls' centerlines, in meters.
+const CLEAR = 0.2
 
 export interface SheetOptions {
   // Any level of the storey to draw; its split levels come with it. By
@@ -158,7 +161,7 @@ export function floorPlanSheet(scene: Scene, options: SheetOptions = {}): Sheet 
     const name = roomName(room)
     const size = formatArea(area(room.floor), units)
     for (const height of [2.2, 1.8, 1.5, 1.2]) {
-      const wide = (Math.max(name.length, size.length * 0.85) * height * CHAR + 1) / k
+      const wide = (Math.max(name.length, size.length * 0.85) * height * CHAR + 1) / k + 2 * CLEAR
       const tall = (height * 2.3) / k
       const corners: Point[] = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([sx, sy]) => [label.at[0] + (sx * wide) / 2, label.at[1] + (sy * tall) / 2])
       if (!corners.every((corner) => pointInPolygon(corner, room.floor) && onPaper([px(corner[0]), py(corner[1])]))) continue

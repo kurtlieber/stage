@@ -66,6 +66,15 @@ test('each room is named with its area where the name fits, and only there', () 
   assert.doesNotMatch(svg, /Downstairs cloakroom/, 'a long name in a 1 m room is left out')
 })
 
+test('a name keeps clear of the walls, or is left out', () => {
+  // At 1:100 "Pantry" at the smallest size is 0.6 m long, but not in a
+  // 0.8 m room once it stands clear of both walls.
+  const pantry = { id: 'pantry', name: 'Pantry', floor: [[13, 0], [13.8, 0], [13.8, 3], [13, 3]] }
+  assert.doesNotMatch(floorPlanSheet(scene(pantry)).svg, />Pantry</)
+  const wider = { ...pantry, floor: [[13, 0], [14.2, 0], [14.2, 3], [13, 3]] }
+  assert.match(floorPlanSheet(scene(wider)).svg, />Pantry</)
+})
+
 test('the sheet is an A3 page in millimeters, its text escaped', () => {
   const sheet = floorPlanSheet(scene(), { title: 'Option <2> & more', date: '2026-01-01' })
   assert.match(sheet.svg, /^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" width="420mm" height="297mm" viewBox="0 0 420 297">/)
