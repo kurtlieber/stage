@@ -15,6 +15,7 @@ import { materialNames } from '../core/materials.ts'
 import { QUESTIONS, query } from '../core/query.ts'
 import { FileSceneStore, PART_ONLY, SCENE_NAME, SCENE_NAME_HELP, type SceneStore, type Version } from '../core/scene-store.ts'
 import { COLLECTIONS, jsonSchema, type Collection } from '../core/schema.ts'
+import { floorPlanSheet } from '../core/sheet.ts'
 import { format } from '../core/store.ts'
 import { EXAMPLES, PATHS, ROOT, SCHEMAS, checkScene, control, newScene, openViewer, removeEntity, upsert } from './ops.ts'
 import { SOURCES, available, fetchModelBesideScene, findModels, remember, thumbnailImage } from './models.ts'
@@ -144,8 +145,8 @@ export interface McpContext {
   openViewer(scene: string): Promise<string>
   /** Points every open viewer of the scene at a camera, level, or entity, and says how many there were. */
   control(scene: string, message: { camera?: string; focus?: string; level?: string }): Promise<number>
-  /** Named scenes: where export writes, and the link that downloads it. */
-  exportFile?(scene: string): { file: string; url: string }
+  /** Named scenes: where export writes a file of this name, and the link that downloads it. */
+  exportFile?(scene: string, name: string): { file: string; url: string }
 }
 
 export const LOCAL: McpContext = {
@@ -178,8 +179,8 @@ export function namedContext(store: SceneStore, urls: { publicUrl: string; viewe
       if (body.error) throw new Error(body.error)
       return body.viewers ?? 0
     },
-    exportFile(scene) {
-      return { file: join(dirname(store.locate(scene)), 'exports', 'scene.glb'), url: `${publicUrl}/files/${sceneToken(scene)}/exports/scene.glb` }
+    exportFile(scene, name) {
+      return { file: join(dirname(store.locate(scene)), 'exports', name), url: `${publicUrl}/files/${sceneToken(scene)}/exports/${encodeURIComponent(name)}` }
     },
   }
 }
@@ -577,44 +578,66 @@ export function buildMcp(context: McpContext): McpServer {
     ({ collection }) => guarded(async () => [text(collection ? z.toJSONSchema(SCHEMAS[collection as Collection]) : jsonSchema())]),
   )
 
-  const exportDescription = 'Write the built scene (walls, floors, openings, furniture) as a binary glTF file, for Blender, a game engine, or any 3D viewer. Fetch assets first so the models are the real ones.'
-  const exportScene = async (scene: string, target: string): Promise<number> => {
+  const exportDescription =
+    'Write the scene as a file. format "glb" (the default) is the built scene (walls, floors, openings, furniture) as binary glTF, for Blender, a game engine, or any 3D viewer; fetch assets first so the models are the real ones. format "pdf" or "svg" is a floor plan sheet: one storey on an A3 page at a standard scale, each room named with its area, zones tinted with their areas, and dimension strings round the outside; `level` picks the storey (any of its levels), by default the one with the most indoor floor, and `title` replaces the scene name on it.'
+  const exportArgs = {
+    format: z.enum(['glb', 'pdf', 'svg']).optional().describe('glb (the default): the 3D scene; pdf or svg: a floor plan sheet'),
+    level: z.string().optional().describe('For a floor plan sheet: a level of the storey to draw'),
+    title: z.string().optional().describe('For a floor plan sheet: the name printed on it, instead of the scene name'),
+  }
+  type Format = 'glb' | 'pdf' | 'svg'
+  type ExportArgs = { format: Format; level?: string; title?: string }
+  const exportScene = async (scene: string, target: string, { format, level, title }: ExportArgs): Promise<Record<string, unknown>> => {
     const result = await checkScene(scene, store)
     if (!result.ok) throw new Error(`${problems(result)}\nfix the errors before exporting`)
-    const glb = await withRenderer((r) => r.export(store.locate(scene)))
+    let data: Buffer
+    let facts: Record<string, unknown> = {}
+    if (format === 'glb') data = await withRenderer((r) => r.export(store.locate(scene)))
+    else {
+      const sheet = floorPlanSheet(result.scene!, { level, title })
+      data = format === 'svg' ? Buffer.from(sheet.svg) : await withRenderer((r) => r.pdf(sheet.svg, sheet.width, sheet.height))
+      facts = { levels: sheet.levels, scale: `1:${sheet.scale}`, indoorArea: Math.round(sheet.indoorArea * 10) / 10, zones: sheet.zones.map((z) => ({ zone: z.zone, area: Math.round(z.area * 10) / 10 })) }
+    }
     await mkdir(dirname(target), { recursive: true })
-    await writeFile(target, glb)
-    return glb.length
+    await writeFile(target, data)
+    return { bytes: data.length, ...facts }
   }
+  const formatOf = (file: string): Format => (/\.pdf$/i.test(file) ? 'pdf' : /\.svg$/i.test(file) ? 'svg' : 'glb')
+  // exports/scene.glb, exports/plan.pdf, or exports/plan-first.pdf for a
+  // storey asked for by name.
+  const exportName = ({ format, level }: ExportArgs) => (format === 'glb' ? 'scene.glb' : `plan${level ? `-${level.replace(/[^\w.-]+/g, '-')}` : ''}.${format}`)
   if (context.exportFile) {
     const exportFile = context.exportFile
     server.registerTool(
       'export',
       {
-        title: 'Export glTF',
-        description: `${exportDescription} It is written to exports/scene.glb beside the scene, replacing the last export, and the reply has a link that downloads it.`,
-        inputSchema: { scene: sceneArg },
+        title: 'Export',
+        description: `${exportDescription} It is written to exports/ beside the scene (scene.glb, plan.pdf, plan-<level>.pdf), replacing the last export of that name, and the reply has a link that downloads it.`,
+        inputSchema: { scene: sceneArg, ...exportArgs },
         annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
       },
-      ({ scene }) =>
+      ({ scene, format, ...rest }) =>
         guarded(async () => {
-          const { file, url } = exportFile(scene)
-          return [text({ download: url, bytes: await exportScene(scene, file) })]
+          const args = { format: format ?? 'glb', ...rest }
+          const { file, url } = exportFile(scene, exportName(args))
+          return [text({ download: url, ...(await exportScene(scene, file, args)) })]
         }),
     )
   } else {
     server.registerTool(
       'export',
       {
-        title: 'Export glTF',
+        title: 'Export',
         description: exportDescription,
-        inputSchema: { scene: sceneArg, out: z.string().describe('Path of the .glb to write') },
+        inputSchema: { scene: sceneArg, out: z.string().describe('Path of the file to write: .glb, .pdf, or .svg'), ...exportArgs },
         annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
       },
-      ({ scene, out }) =>
+      ({ scene, out, format, ...rest }) =>
         guarded(async () => {
           const target = resolve(out)
-          return [text({ file: target, bytes: await exportScene(scene, target) })]
+          // Without a format, the file's own extension says which.
+          const args = { format: format ?? formatOf(target), ...rest }
+          return [text({ file: target, ...(await exportScene(scene, target, args)) })]
         }),
     )
   }

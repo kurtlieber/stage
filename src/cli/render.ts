@@ -194,14 +194,6 @@ export class Renderer {
     const gap = 8
     const page = { width: panels.length * width + (panels.length - 1) * gap, height: height + labelH }
     await this.devtools.send('Emulation.setDeviceMetricsOverride', { ...page, deviceScaleFactor: 1, mobile: false }, this.sessionId)
-    await this.devtools.send('Page.navigate', { url: 'about:blank' }, this.sessionId)
-    const deadline = Date.now() + 10000
-    for (;;) {
-      const { result } = await this.devtools.send('Runtime.evaluate', { expression: 'location.href === "about:blank" && document.readyState === "complete"', returnByValue: true }, this.sessionId)
-      if (result?.value === true) break
-      if (Date.now() > deadline) throw new Error('the comparison page did not open')
-      await new Promise((resolve) => setTimeout(resolve, 50))
-    }
     const escape = (s: string) => s.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`)
     const html = `<!doctype html><html><body style="margin:0;background:#1d1d1f;display:flex;gap:${gap}px">${panels
       .map(
@@ -209,11 +201,41 @@ export class Renderer {
           `<figure style="margin:0;width:${width}px"><figcaption style="height:${labelH}px;line-height:${labelH}px;padding:0 10px;color:#e8e6e1;font:600 15px system-ui,sans-serif">${escape(p.label)}</figcaption><img style="display:block;width:${width}px;height:${height}px" src="data:image/png;base64,${p.png.toString('base64')}"></figure>`,
       )
       .join('')}</body></html>`
+    await this.write(html)
+    const { data } = await this.devtools.send('Page.captureScreenshot', { format: 'png' }, this.sessionId)
+    return Buffer.from(data, 'base64')
+  }
+
+  // A page of our own on a blank tab, its images loaded.
+  private async write(html: string) {
+    await this.devtools.send('Page.navigate', { url: 'about:blank' }, this.sessionId)
+    const deadline = Date.now() + 10000
+    for (;;) {
+      const { result } = await this.devtools.send('Runtime.evaluate', { expression: 'location.href === "about:blank" && document.readyState === "complete"', returnByValue: true }, this.sessionId)
+      if (result?.value === true) break
+      if (Date.now() > deadline) throw new Error('the blank page did not open')
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
     await this.devtools.send(
       'Runtime.evaluate',
-      { expression: `(async () => { document.open(); document.write(${JSON.stringify(html)}); document.close(); await Promise.all([...document.images].map((i) => i.decode())); return true })()`, awaitPromise: true, returnByValue: true },
+      { expression: `(async () => { document.open(); document.write(${JSON.stringify(html)}); document.close(); await Promise.all([...document.images].map((i) => i.decode())); await document.fonts.ready; return true })()`, awaitPromise: true, returnByValue: true },
       this.sessionId,
     )
+  }
+
+  // An SVG drawing as a one-page PDF its own size, in millimeters: a floor
+  // plan sheet, printed true to scale.
+  async pdf(svg: string, width: number, height: number): Promise<Buffer> {
+    await this.write(`<!doctype html><html><head><style>@page { size: ${width}mm ${height}mm; margin: 0 } html, body { margin: 0 } svg { display: block }</style></head><body>${svg}</body></html>`)
+    const { data } = await this.devtools.send('Page.printToPDF', { printBackground: true, preferCSSPageSize: true, marginTop: 0, marginBottom: 0, marginLeft: 0, marginRight: 0 }, this.sessionId)
+    return Buffer.from(data, 'base64')
+  }
+
+  // The same drawing as a picture, this many pixels wide.
+  async picture(svg: string, width: number, height: number, pixels: number): Promise<Buffer> {
+    const page = { width: pixels, height: Math.round((pixels * height) / width) }
+    await this.devtools.send('Emulation.setDeviceMetricsOverride', { ...page, deviceScaleFactor: 1, mobile: false }, this.sessionId)
+    await this.write(`<!doctype html><html><head><style>html, body { margin: 0 } svg { display: block; width: 100vw; height: 100vh }</style></head><body>${svg}</body></html>`)
     const { data } = await this.devtools.send('Page.captureScreenshot', { format: 'png' }, this.sessionId)
     return Buffer.from(data, 'base64')
   }

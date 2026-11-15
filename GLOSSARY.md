@@ -28,6 +28,10 @@ _Avoid_: suggestion, mock-up, extra
 The area the architects print for a room on a drawing, which the scene's own area is checked against.
 _Avoid_: official area, architect's area
 
+**Zone**:
+A named part of the house that rooms belong to, such as the living wing or the bedroom wing, as the architects group them. A zone has its own area.
+_Avoid_: wing, block, area
+
 ## Looking at the scene
 
 **Viewer**:
@@ -57,6 +61,10 @@ _Avoid_: room view, dollhouse, focus
 **Walk mode**:
 Standing in the house at eye level and moving through it like a person.
 _Avoid_: first person, walkthrough
+
+**Floor plan sheet**:
+One storey printed on a page at a standard scale, the way architects present a scheme: each room named with its area, each zone tinted, the indoor area and dimensions round the outside.
+_Avoid_: floor plan export, plan PDF, drawing
 
 **Place**:
 A named spot in a room, set by the agent, to stand at and look from.
