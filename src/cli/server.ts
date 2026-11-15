@@ -32,6 +32,7 @@ const TYPES: Record<string, string> = {
   '.bin': 'application/octet-stream',
   '.ktx2': 'image/ktx2',
   '.svg': 'image/svg+xml',
+  '.pdf': 'application/pdf',
 }
 
 // The scene's folder as a path segment: a glTF's textures and buffers are

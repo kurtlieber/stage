@@ -49,6 +49,9 @@ export const Room = z.object({
   id,
   level: id.default('ground'),
   name: z.string().optional(),
+  // The part of the house the room belongs to, like "A" or "Guest wing".
+  // A floor plan sheet tints each zone and gives its area.
+  zone: z.string().min(1).optional(),
   floor: z.array(point).min(3, 'a floor needs at least three corners'),
   height: z.number().positive().optional(),
   // Outdoors: no ceiling, and its own edges get a parapet instead of a
@@ -231,7 +234,7 @@ export const KEY_ORDER: Record<string, string[]> = {
   scene: ['stage', 'name', 'units', 'levels', 'rooms', 'openings', 'items', 'objects', 'lights', 'cameras', 'materials'],
   level: ['id', 'name', 'elevation', 'height', 'slab', 'grade', 'plan', 'roof'],
   plan: ['image', 'scale', 'origin', 'opacity'],
-  room: ['id', 'level', 'name', 'floor', 'height', 'open', 'parapet', 'well', 'ceiling', 'thickness', 'materials'],
+  room: ['id', 'level', 'name', 'zone', 'floor', 'height', 'open', 'parapet', 'well', 'ceiling', 'thickness', 'materials'],
   opening: ['id', 'wall', 'at', 'type', 'width', 'height', 'sill', 'swing'],
   item: ['id', 'asset', 'room', 'at', 'facing', 'elevation', 'size', 'scale'],
   object: ['id', 'kind', 'name', 'label', 'parent', 'room', 'at', 'facing', 'pitch', 'roll', 'scale', 'size', 'radius', 'top', 'height', 'polygon', 'file', 'source', 'license', 'credit', 'asset', 'material', 'color', 'roughness', 'metalness', 'opacity', 'glow', 'solid'],

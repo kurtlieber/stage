@@ -9,6 +9,7 @@ import { allCameras, turntable } from '../core/cameras.ts'
 import { materialNames } from '../core/materials.ts'
 import { QUESTIONS, query } from '../core/query.ts'
 import { COLLECTIONS, jsonSchema, type Collection } from '../core/schema.ts'
+import { floorPlanSheet } from '../core/sheet.ts'
 import { readScene, writeScene } from '../core/store.ts'
 import { ROOT, checkScene, control, newScene, openViewer, removeEntity, upsert } from './ops.ts'
 import { Renderer } from './render.ts'
@@ -39,6 +40,8 @@ Commands that need no display:
   show <scene> [--camera id] [--level id] [--focus id]
                                        Point every open viewer at a camera, level, or entity
   export <scene> -o scene.glb          Write the built scene as binary glTF
+  export <scene> -o plan.pdf [--level id] [--title T]
+                                       A floor plan sheet of one storey on A3, rooms, zones, areas and dimensions (.pdf or .svg)
   share <scene> -o folder              Bundle viewer, scene, and assets for any static host
   assets [words...] [--category c]     Search the asset library
   assets fetch [ids|scene.json...] [--all]  Download CC0 textures, models and the sky into the local cache
@@ -94,6 +97,7 @@ async function main(argv: string[]): Promise<number> {
       focus: { type: 'string' },
       size: { type: 'string' },
       name: { type: 'string' },
+      title: { type: 'string' },
       from: { type: 'string' },
       category: { type: 'string' },
       port: { type: 'string' },
@@ -262,23 +266,30 @@ async function main(argv: string[]): Promise<number> {
       return 0
 
     case 'export': {
-      if (!scene) return fail('name a scene: stage export <scene> -o scene.glb')
+      if (!scene) return fail('name a scene: stage export <scene> -o scene.glb (or plan.pdf, plan.svg)')
       const out = (values.out as string | undefined) ?? 'scene.glb'
       const result = await checkScene(scene)
       if (!result.ok) {
         reportCheck(result, json)
         return fail('fix the errors above before exporting')
       }
-      const renderer = await Renderer.start()
-      try {
-        const glb = await renderer.export(resolve(scene))
-        const target = resolve(out)
-        mkdirSync(dirname(target), { recursive: true })
-        await writeFile(target, glb)
-        json ? print({ ok: true, file: target, bytes: glb.length }) : print(`Exported ${target} (${(glb.length / 1e6).toFixed(1)} MB)`)
-      } finally {
-        await renderer.close()
+      const target = resolve(out)
+      // A .pdf or .svg is a floor plan sheet; anything else the 3D scene.
+      const sheet = /\.(pdf|svg)$/i.test(target) ? floorPlanSheet(result.scene!, { level: values.level as string | undefined, title: values.title as string | undefined }) : undefined
+      let data: Buffer
+      if (sheet && /\.svg$/i.test(target)) data = Buffer.from(sheet.svg)
+      else {
+        const renderer = await Renderer.start()
+        try {
+          data = sheet ? await renderer.pdf(sheet.svg, sheet.width, sheet.height) : await renderer.export(resolve(scene))
+        } finally {
+          await renderer.close()
+        }
       }
+      mkdirSync(dirname(target), { recursive: true })
+      await writeFile(target, data)
+      const about = sheet ? `, ${sheet.levels.join(' + ')} at 1:${sheet.scale}` : ''
+      json ? print({ ok: true, file: target, bytes: data.length, ...(sheet && { levels: sheet.levels, scale: sheet.scale }) }) : print(`Exported ${target} (${data.length < 1e5 ? `${Math.ceil(data.length / 1e3)} kB` : `${(data.length / 1e6).toFixed(1)} MB`}${about})`)
       return 0
     }
 

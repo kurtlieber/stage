@@ -171,6 +171,7 @@ Every command except `open`, `serve`, and `mcp` needs no display, takes
 | `stage open <scene>` | The live viewer in your browser |
 | `stage show <scene> --focus <id>` | Fly every open viewer to an entity |
 | `stage export <scene> -o scene.glb` | The built scene as binary glTF, for Blender or any viewer |
+| `stage export <scene> -o plan.pdf [--level id]` | A floor plan sheet: one storey on A3 at a standard scale, rooms named with their areas, zones tinted, dimension strings round the outside (`.pdf` or `.svg`) |
 | `stage share <scene> -o folder` | The viewer, scene, and only the assets it needs, for any static host |
 | `stage assets [words]` | Search the furniture library |
 | `stage assets fetch [ids \| scene.json] [--all]` | Download the CC0 assets: the basics, what a scene uses, or everything |

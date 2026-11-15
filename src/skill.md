@@ -38,10 +38,10 @@ stands in rooms, levels stack. A scene with no rooms is fine.
 - The tools: `new_scene`, `open_viewer`, `show` (fly the person's view),
   `check`, `render` (an image you look at), `query`, `set`, `remove`,
   `write_scene`, `read_scene`, `assets`, `fetch_assets`, `find_model`,
-  `fetch_model`, `materials`, `schema`, `export` (glTF), `calibrate_plan`
-  (fit a level's drawing to scale). Resources `stage://guide`, `stage://schema`,
-  and `stage://examples/<name>` hold this guide, the format, and the
-  example scenes.
+  `fetch_model`, `materials`, `schema`, `export` (glTF, or a floor plan
+  sheet as PDF or SVG), `calibrate_plan` (fit a level's drawing to scale).
+  Resources `stage://guide`, `stage://schema`, and `stage://examples/<name>`
+  hold this guide, the format, and the example scenes.
 
 ## The format
 
@@ -49,6 +49,8 @@ stands in rooms, levels stack. A scene with no rooms is fine.
 - `rooms`: `floor` is a polygon of corners. Edge n runs from `floor[n]` to
   `floor[n+1]` (the last edge closes back to the first corner). Rooms that
   share an edge share one wall; walls are built for you.
+  `zone` (like "A") names the part of the house a room belongs to; a floor
+  plan sheet tints each zone and gives its area.
 - `openings`: on `{ "room": id, "edge": n }`, starting `at` meters along that
   edge from `floor[n]`. `type` is door, window, opening (a stretch of
   missing wall), or slider (a sliding glass door from the floor up, its

@@ -280,6 +280,24 @@ test('the MCP server answers only its own hosts, and only POST', async () => {
   assert.equal((await raw(`${health.replace(/\/health$/, '')}/other`)).status, 404)
 })
 
+test('export writes a floor plan sheet beside the scene, with a link that downloads it', async () => {
+  await call('new_scene', { scene: 'house/sheet', from: 'room' })
+  const reply = await call('export', { scene: 'house/sheet', format: 'svg' })
+  assert.ok(!reply.isError, reply.text)
+  const sheet = JSON.parse(reply.text)
+  assert.equal(sheet.download, `${PUBLIC}/files/${sceneToken('house/sheet')}/exports/plan.svg`)
+  assert.match(sheet.scale, /^1:\d+$/)
+  assert.ok(existsSync(join(root, 'house/sheet/exports/plan.svg')))
+  const served = await raw(`${viewer.url.replace(/\/$/, '')}/files/${sceneToken('house/sheet')}/exports/plan.svg`)
+  assert.equal(served.status, 200)
+  assert.equal(served.type, 'image/svg+xml')
+  assert.match(served.body, /^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" width="420mm"/)
+  // A storey asked for by name keeps its own file.
+  const ground = JSON.parse((await call('export', { scene: 'house/sheet', format: 'svg', level: 'ground' })).text)
+  assert.match(ground.download, /\/exports\/plan-ground\.svg$/)
+  assert.match((await call('export', { scene: 'house/sheet', format: 'svg', level: 'attic' })).text, /no level "attic"/)
+})
+
 test('the viewer serves scenes by name and no file outside the folder', async () => {
   await call('new_scene', { scene: 'house/served', from: 'room' })
   const base = viewer.url.replace(/\/$/, '')
