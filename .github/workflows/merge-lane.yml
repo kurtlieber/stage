@@ -1,0 +1,90 @@
+# Merge lane: a pull request from kurts-bots or Kurt merges itself after CI
+# unless it touches a path on the Kurt-only list (ADR 0080 section 6; it
+# replaced the Docs lane of ADR 0064).
+#
+# tools/merge-lane/merge_lane.py decides; tools/merge-lane/kurt-only.txt is this
+# repository's Kurt-only list; tools/merge-lane/README.md explains the lane. The
+# workflow and merge_lane.py are byte-identical in each repository that has the
+# lane (the README's Repositories table); only kurt-only.txt differs. Edit
+# dotfiles, then copy.
+#
+# It posts the commit status `merge-lane`: "merges itself after CI", "waiting
+# for the worker's review of this head", "waiting for the worker's fix round",
+# or "Kurt merges: <why>". When it merges itself, it turns on squash auto-merge
+# for that head, or merges at once when the required checks have already passed.
+#
+# GitHub does not close linked issues ("Closes #N") when this workflow's token
+# merges, so the lane closes them: right after it merges, and from the hourly
+# schedule (--sweep) when auto-merge finished the merge later. No event reaches
+# this workflow for a merge its own token made.
+#
+# Safety: every trigger here runs this file and merge_lane.py from the base or
+# default branch, never the pull request's copy. Nothing checks out or runs
+# pull request code; the script reads the pull request through the API. The
+# review reaches this workflow through merge-lane-review.yml, which has no
+# permissions and whose only output is that it ran: the script reads everything
+# again from the API. No secrets.
+name: merge-lane
+
+on:
+  pull_request_target:
+    # review_requested: the worker's fix round is over; labeled, unlabeled: waiting-on-kurt.
+    types: [opened, synchronize, reopened, ready_for_review, review_requested, labeled, unlabeled]
+    branches: [master, main]
+  # The worker's review, relayed: pull_request_review would run the PR's copy of a workflow.
+  workflow_run:
+    workflows: [merge-lane-review]
+    types: [completed]
+  # The worker posts its review as a comment where GitHub refuses a review.
+  issue_comment:
+    types: [created]
+  # Lane merges that auto-merge finished: close their linked issues.
+  schedule:
+    - cron: "23 * * * *"
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number to decide again
+        required: true
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  statuses: write
+
+concurrency:
+  group: merge-lane-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr || github.event.workflow_run.pull_requests[0].number || github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+
+jobs:
+  decide:
+    if: >-
+      github.event_name == 'pull_request_target' ||
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
+       github.event.comment.user.login == 'kurts-bots[bot]' &&
+       contains(github.event.comment.body, 'claude-worker head='))
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: tools/merge-lane
+
+      - name: Decide
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number || github.event.issue.number || inputs.pr || github.event.workflow_run.pull_requests[0].number }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = schedule ]; then which=(--sweep)
+          elif [ -n "$PR" ]; then which=(--pr "$PR"); else which=(--sha "$SHA"); fi
+          python3 -I tools/merge-lane/merge_lane.py --repo "$REPO" \
+            --kurt-only tools/merge-lane/kurt-only.txt "${which[@]}"

@@ -1,0 +1,8 @@
+# The Kurt-only list of kurtlieber/stage (ADR 0080 section 6 in kurtlieber/dotfiles).
+# A pull request that changes a path matching a line here, or renames one away,
+# waits for Kurt to merge it. Every other pull request from kurts-bots[bot] or
+# kurtlieber merges itself after CI. `**` crosses `/`; `*` and `?` do not.
+
+# The gate itself: CI, the lane, and this list
+.github/**
+tools/merge-lane/**

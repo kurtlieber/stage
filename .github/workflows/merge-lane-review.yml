@@ -1,0 +1,26 @@
+# Relays the claude-worker's review to merge-lane.yml (ADR 0080 section 6).
+#
+# pull_request_review runs the pull request's copy of a workflow, so this one
+# has no permissions and does nothing but finish. merge-lane.yml listens for it
+# with workflow_run, which runs the default branch's copy, and reads the pull
+# request again from the API. Byte-identical in each repository with the lane.
+name: merge-lane-review
+
+on:
+  pull_request_review:
+    types: [submitted]
+
+permissions: {}
+
+jobs:
+  relay:
+    if: >-
+      github.event.review.user.login == 'kurts-bots[bot]' &&
+      contains(github.event.review.body, 'claude-worker head=')
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Relay
+        env:
+          PR: ${{ github.event.pull_request.number }}
+        run: echo "the worker reviewed pull request ${PR}; merge-lane decides again"
