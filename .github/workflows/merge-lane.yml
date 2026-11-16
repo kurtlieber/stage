@@ -5,8 +5,8 @@
 # tools/merge-lane/merge_lane.py decides; tools/merge-lane/kurt-only.txt is this
 # repository's Kurt-only list; tools/merge-lane/README.md explains the lane. The
 # workflow and merge_lane.py are byte-identical in each repository that has the
-# lane (the README's Repositories table); only kurt-only.txt differs. Edit
-# dotfiles, then copy.
+# lane (listed in dotfiles' tools/merge-lane/README.md); only kurt-only.txt
+# differs. Edit dotfiles, then copy.
 #
 # It posts the commit status `merge-lane`: "merges itself after CI", "waiting
 # for the worker's review of this head", "waiting for the worker's fix round",
