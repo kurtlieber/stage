@@ -1,5 +1,5 @@
 import { findAsset } from './assets.ts'
-import { DEFAULT_SILL, area, edges, levelAbove, levelsByElevation, pointInPolygon, roomElevation, roomHeight, type Point } from './geometry.ts'
+import { DEFAULT_SILL, area, edges, levelAbove, levelsByElevation, pointInPolygon, roomElevation, roomHeight, walls, type Point } from './geometry.ts'
 import { MATERIALS } from './materials.ts'
 import { sliderLayout } from './slider.ts'
 import { stair } from './stairs.ts'
@@ -217,6 +217,9 @@ function spatial(scene: Scene): Problem[] {
     }
   })
 
+  // A room is reachable through any opening on a wall it stands on, even
+  // one that belongs to a neighbor whose edge runs past the shared stretch.
+  const reachable = new Set(walls(scene).filter((w) => w.openings.length > 0).flatMap((w) => w.rooms))
   scene.rooms.forEach((room, index) => {
     if (area(room.floor) < 0.5) {
       problems.push({
@@ -226,7 +229,7 @@ function spatial(scene: Scene): Problem[] {
         message: `the floor of "${room.id}" has an area of ${area(room.floor).toFixed(2)} m²; the corners probably repeat or lie on a line.`,
       })
     }
-    const hasWayIn = room.open || room.well || scene.openings.some((o) => o.wall.room === room.id) || sharesOpening(scene, room.id)
+    const hasWayIn = room.open || room.well || scene.openings.some((o) => o.wall.room === room.id) || reachable.has(room.id)
     if (!hasWayIn) {
       problems.push({
         severity: 'warning',
@@ -520,24 +523,6 @@ export function rectanglesOverlap(p: Rect, q: Rect): boolean {
 }
 
 // A room reached through a neighbor's opening on the shared wall.
-function sharesOpening(scene: Scene, roomId: string): boolean {
-  const room = scene.rooms.find((r) => r.id === roomId)
-  if (!room) return false
-  const mine = new Set(edges(room).map((e) => key(e.a, e.b)))
-  return scene.openings.some((opening) => {
-    const other = scene.rooms.find((r) => r.id === opening.wall.room)
-    if (!other || other.id === roomId) return false
-    const edge = edges(other)[opening.wall.edge]
-    return edge ? mine.has(key(edge.a, edge.b)) : false
-  })
-}
-
-function key(a: [number, number], b: [number, number]): string {
-  const p = `${a[0].toFixed(4)},${a[1].toFixed(4)}`
-  const q = `${b[0].toFixed(4)},${b[1].toFixed(4)}`
-  return p < q ? `${p}|${q}` : `${q}|${p}`
-}
-
 export function formatProblem(problem: Problem): string {
   const where = problem.entity ? `${problem.path} "${problem.entity}"` : problem.path
   return `${problem.severity}: ${where}: ${problem.message}`

@@ -59,6 +59,17 @@ test('a room with no way in is a warning', async () => {
   assert.match(messages(raw).join('\n'), /warning closet: "closet" has no door or opening/)
 })
 
+test('a door on a neighbor\'s longer edge is a way in where the rooms share it', async () => {
+  // The closet shares only the west 2 m of the living room's 5.5 m north edge.
+  const raw = await example()
+  raw.rooms.push({ id: 'closet', floor: [[0, 4], [2, 4], [2, 6], [0, 6]] })
+  const door = { id: 'closet-door', wall: { room: 'living', edge: 2 }, at: 4.2, type: 'door', width: 0.8, height: 2.1 }
+  raw.openings.push(door)
+  assert.doesNotMatch(messages(raw).join('\n'), /"closet" has no door or opening/)
+  door.at = 1.0 // the stretch of that edge the closet does not share
+  assert.match(messages(raw).join('\n'), /warning closet: "closet" has no door or opening/)
+})
+
 test('rooms sharing an edge share one interior wall', async () => {
   const scene = check(await example()).scene!
   const all = walls(scene)
