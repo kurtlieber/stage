@@ -1,0 +1,29 @@
+{
+ "stage_design": 1,
+ "id": "oak-shelf",
+ "name": "Oak shelf",
+ "summary": "A small open shelf: two sides and three fixed shelves.",
+ "project": "flat",
+ "rooms": ["living"],
+ "placements": [{ "room": "living", "object": "design-oak-shelf-1" }],
+ "size": [0.8, 0.3, 0.9],
+ "status": "issued-for-review",
+ "updated": "2026-01-15T09:00:00Z",
+ "parts": [
+  { "id": "side", "name": "Side", "material": "18 mm oak-veneered plywood", "qty": 2, "size_mm": [18, 300, 900] },
+  { "id": "shelf", "name": "Fixed shelf", "material": "18 mm oak-veneered plywood", "qty": 3, "size_mm": [764, 300, 18] }
+ ],
+ "files": {
+  "model": "model.glb",
+  "thumbnail": "thumb.png",
+  "package": [
+   { "label": "Drawing set (PDF)", "file": "package/drawings.pdf" },
+   { "label": "Cut list (CSV)", "file": "package/cut-list.csv" },
+   { "label": "Model (STEP)", "file": "package/model.step" },
+   { "label": "Model for Blender (GLB)", "file": "model.glb" }
+  ]
+ },
+ "revisions": [
+  { "letter": "A", "date": "2026-01-15", "status": "issued-for-review", "holds": 1, "files": [{ "label": "Drawing set (PDF)", "file": "revisions/A/drawings.pdf" }] }
+ ]
+}

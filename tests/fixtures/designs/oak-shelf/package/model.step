@@ -1,0 +1,5 @@
+ISO-10303-21;
+HEADER;
+/* a stand-in STEP file for tests */
+ENDSEC;
+END-ISO-10303-21;

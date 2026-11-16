@@ -78,6 +78,18 @@ _Avoid_: card, info box, sidebar
 Walls between the camera and what it looks at, cut down or turned to glass so the person sees in.
 _Avoid_: dollhouse, slice, section
 
+**Design**:
+One piece of furniture or cabinetry drawn for a project by a CAD pipeline outside Stage, with its parts, drawings and cut list. The viewer shows it alone on a studio floor and in the rooms it is placed in.
+_Avoid_: model, asset, piece
+
+**Part**:
+One kind of component of a Design, such as a door or a shelf, with how many the design needs. Each copy is a node of the design's model named by the part's id.
+_Avoid_: component, panel
+
+**Revision**:
+An issued, frozen set of a Design's files, lettered A, B, C. The draft is what the pipeline writes between revisions.
+_Avoid_: version, release
+
 ## Reviewing
 
 **Concept image**:

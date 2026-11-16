@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readdir, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readdir, symlink, writeFile } from 'node:fs/promises'
 import { request } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -47,7 +47,7 @@ async function call(name: string, args: Record<string, unknown>): Promise<Reply>
 }
 
 // A raw request, so the test can send any Host header.
-function raw(url: string, options: { method?: string; host?: string; body?: string } = {}): Promise<{ status: number; body: string; location?: string; type?: string }> {
+function raw(url: string, options: { method?: string; host?: string; body?: string } = {}): Promise<{ status: number; body: string; location?: string; type?: string; disposition?: string }> {
   const target = new URL(url)
   return new Promise((done, fail) => {
     const req = request(
@@ -55,7 +55,7 @@ function raw(url: string, options: { method?: string; host?: string; body?: stri
       (res) => {
         let body = ''
         res.on('data', (chunk) => (body += chunk))
-        res.on('end', () => done({ status: res.statusCode ?? 0, body, location: res.headers.location, type: res.headers['content-type'] }))
+        res.on('end', () => done({ status: res.statusCode ?? 0, body, location: res.headers.location, type: res.headers['content-type'], disposition: res.headers['content-disposition'] }))
       },
     )
     req.on('error', fail)
@@ -332,6 +332,70 @@ test('the viewer serves scenes by name and no file outside the folder', async ()
 // Opened bare, with no ?scene=, the page takes itself for a share bundle and
 // looks for scene.json beside it. A server of named scenes sends a bare
 // visit to a scene instead, and says so when it has none.
+test('the viewer lists designs and serves their files, and nothing outside a design', async () => {
+  const base = viewer.url.replace(/\/$/, '')
+  assert.deepEqual(JSON.parse((await raw(`${base}/api/designs`)).body), [], 'no designs folder yet')
+  const designs = join(root, 'designs')
+  await cp(new URL('./fixtures/designs/oak-shelf/', import.meta.url), join(designs, 'oak-shelf'), { recursive: true })
+  await mkdir(join(designs, 'half-written'))
+  await writeFile(join(designs, 'half-written', 'design.json'), '{"stage_design": 1, "id": "half-written"}')
+  // A design folder with a scene in it is still not a scene.
+  await writeFile(join(designs, 'oak-shelf', 'scene.json'), '{"stage": "0.1", "name": "not a scene"}')
+
+  const list = await raw(`${base}/api/designs`)
+  assert.equal(list.status, 200)
+  const found = JSON.parse(list.body)
+  assert.deepEqual(found.map((d: { id: string }) => d.id), ['oak-shelf'])
+  assert.equal(found[0].parts[0].qty, 2)
+
+  // What the viewer shows comes inline; everything else is a download named
+  // for its design.
+  const file = (path: string) => raw(`${base}/designs/${path}`)
+  const model = await file('oak-shelf/model.glb')
+  assert.deepEqual([model.status, model.type, model.disposition], [200, 'model/gltf-binary', undefined])
+  const expected: [string, string, string][] = [
+    ['package/drawings.pdf', 'application/pdf', 'oak-shelf-drawings.pdf'],
+    ['package/cut-list.csv', 'text/csv; charset=utf-8', 'oak-shelf-cut-list.csv'],
+    ['package/model.step', 'application/step', 'oak-shelf-model.step'],
+    ['revisions/A/drawings.pdf', 'application/pdf', 'oak-shelf-drawings.pdf'],
+  ]
+  for (const [path, type, name] of expected) {
+    const reply = await file(`oak-shelf/${path}`)
+    assert.equal(reply.status, 200, path)
+    assert.equal(reply.type, type, path)
+    assert.match(reply.disposition ?? '', new RegExp(`^attachment; filename="${name}"`), path)
+  }
+
+  await mkdir(join(root, 'secrets'))
+  await writeFile(join(root, 'secrets', 'key.txt'), 'secret')
+  await symlink(join(root, 'secrets'), join(designs, 'oak-shelf', 'package', 'out'))
+  for (const path of [
+    'oak-shelf/thumb.png',
+    'oak-shelf/package',
+    'oak-shelf/..%2F..%2Fsecrets%2Fkey.txt',
+    '..%2Fsecrets/key.txt',
+    'Oak-Shelf/model.glb',
+    'oak-shelf/package/out/key.txt',
+    'oak-shelf/%E0%A4%A',
+  ]) {
+    const reply = await file(path)
+    assert.equal(reply.status, 404, path)
+    assert.ok(!reply.body.includes('secret'), path)
+  }
+
+  // designs/ is no project: not in the picker's list, nor the scenes tool's.
+  assert.ok(!JSON.parse((await raw(`${base}/api/scenes`)).body).scenes.some((name: string) => name.startsWith('designs/')))
+  const scenes = await call('scenes', {})
+  assert.ok(!scenes.text.includes('designs/'), scenes.text)
+
+  const single = await startServer(0)
+  try {
+    assert.equal((await raw(`${single.url.replace(/\/$/, '')}/api/designs`)).status, 404)
+  } finally {
+    await single.close()
+  }
+})
+
 test('the bare address of a viewer of named scenes opens a scene', async () => {
   const folder = await mkdtemp(join(tmpdir(), 'stage-home-'))
   const store = new FileSceneStore(folder)

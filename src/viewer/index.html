@@ -12,8 +12,10 @@
     <div id="hud" class="hud">
       <div class="loading hidden"><div id="progress" class="progress"></div><div id="progress-label" class="progress-label"></div></div>
       <div class="top">
+        <button id="design-back" class="chip back hidden" type="button" title="Back to the scene (Esc)">‹ Back</button>
         <div id="title" class="title">Stage</div>
         <select id="scenes" class="chip scene-picker hidden" title="Open another scene" aria-label="Scene"></select>
+        <button id="designs-button" class="chip designs-button hidden" type="button" title="The furniture and cabinetry designed for this project" aria-controls="gallery" aria-expanded="false">Designs</button>
         <nav id="modes" class="modes" aria-label="Mode">
           <button type="button" data-mode="plan" title="Plan: the floor plan of a level (P)">Plan</button>
           <button type="button" data-mode="house" title="House: the whole house from outside (H)">House</button>
@@ -27,6 +29,8 @@
         <div id="menu" class="menu"></div>
       </aside>
       <aside id="room-panel" class="panel room-panel hidden" aria-labelledby="room-title"></aside>
+      <aside id="gallery" class="panel gallery hidden" aria-labelledby="gallery-title"></aside>
+      <aside id="design-panel" class="panel design-panel hidden" aria-labelledby="design-title"></aside>
       <div class="bottom">
         <div id="mode-hint" class="panel mode-hint"></div>
         <div id="selection" class="panel hidden"></div>
@@ -46,9 +50,10 @@
         <div><kbd>C</kbd> next place, <kbd>[</kbd> <kbd>]</kbd> one level down or up</div>
         <div><kbd>U</kbd> meters or feet and inches, <kbd>L</kbd> room labels, <kbd>F</kbd> high or fast rendering</div>
         <div>Click anything to see its id and size</div>
+        <div>Designs: point at a part to find it in the list, click to keep it lit, <kbd>Esc</kbd> to go back</div>
         <div><kbd>?</kbd> or <kbd>Esc</kbd> to close this list</div>
       </div>
-      <button id="help-toggle" class="hint" type="button" aria-controls="help" aria-expanded="false"><kbd>?</kbd> keys</button>
+      <button id="help-toggle" class="hint" type="button" aria-controls="help" aria-expanded="false" aria-label="Keys"><kbd>?</kbd><span class="hint-word"> keys</span></button>
       <div class="crosshair"></div>
     </div>
     <script type="module" src="./main.ts"></script>

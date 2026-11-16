@@ -89,6 +89,31 @@ A project's variants are its scenes: `house/main` and
 up (`object:<room>:top`), or the whole plan when they span rooms; any
 `render` camera can be given instead.
 
+## Designs
+
+A Design is one piece of furniture or cabinetry drawn by a CAD pipeline
+outside Stage. Designs live beside the projects, one folder each, and
+`designs` is not a project name:
+
+```text
+designs/media-console/
+├── design.json         name, project, rooms, size, status, parts, files
+├── model.glb           Y-up, meters, origin on the floor under its middle,
+│                       front toward −Z; each part a node named by its id
+├── thumb.png           optional, a picture for the gallery
+├── package/            the current draft's files
+└── revisions/A/        each issued revision's files, frozen
+```
+
+`/api/designs` lists the valid designs, and a server log line names any
+it skipped and why. `/designs/<id>/<file>` serves a design's files;
+drawings, cut lists, and STEP models download as `<id>-<file>`. The
+viewer shows a Designs button when the scene's project has designs: a
+gallery, and each design alone on a studio floor with its parts, its
+files, and a way to see it in its room (`?design=<id>` opens one). A
+house scene places a design as an ordinary model object, named in the
+design's `placements`. The viewer refreshes when a design changes.
+
 ## Settings
 
 | Variable | Used by | What it is |

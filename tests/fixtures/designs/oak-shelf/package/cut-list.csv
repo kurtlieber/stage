@@ -1,0 +1,3 @@
+part,name,qty,w_mm,d_mm,h_mm
+side,Side,2,18,300,900
+shelf,Fixed shelf,3,764,300,18

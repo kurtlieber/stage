@@ -110,6 +110,9 @@ const PART = '[a-z0-9][a-z0-9-]{0,63}'
 export const SCENE_NAME = new RegExp(`^${PART}/${PART}$`)
 export const PART_ONLY = new RegExp(`^${PART}$`)
 export const SCENE_NAME_HELP = 'a scene name is project/variant in lowercase letters, digits, and hyphens, like house/main'
+// A folder beside the projects that is not one: designs/ holds furniture
+// designs (src/core/design-store.ts), so no scene may be made or found there.
+const RESERVED = new Set(['designs'])
 
 // One version of a scene. Version 1 is the scene as it was created, and
 // every write after it is the next number. `back` is where undo goes from
@@ -144,6 +147,8 @@ export class FileSceneStore implements SceneStore {
 
   locate(scene: string): string {
     if (typeof scene !== 'string' || !SCENE_NAME.test(scene)) throw new Error(`"${scene}" is not a scene name; ${SCENE_NAME_HELP}`)
+    const project = scene.split('/')[0]
+    if (RESERVED.has(project)) throw new Error(`"${project}" holds designs, not scenes; pick another project name`)
     return join(this.root, scene, 'scene.json')
   }
 
@@ -307,7 +312,7 @@ export class FileSceneStore implements SceneStore {
   async list(): Promise<string[]> {
     const names: string[] = []
     for (const project of await folders(this.root)) {
-      if (!PART_ONLY.test(project)) continue
+      if (!PART_ONLY.test(project) || RESERVED.has(project)) continue
       for (const variant of await folders(join(this.root, project))) {
         if (PART_ONLY.test(variant) && existsSync(join(this.root, project, variant, 'scene.json'))) names.push(`${project}/${variant}`)
       }

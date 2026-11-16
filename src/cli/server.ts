@@ -1,9 +1,11 @@
-import { createReadStream, existsSync, readFileSync, statSync, watch, type FSWatcher } from 'node:fs'
+import { createReadStream, existsSync, readFileSync, realpathSync, statSync, watch, type FSWatcher } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { basename, dirname, extname, isAbsolute, join, normalize, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { SceneStore } from '../core/scene-store.ts'
+import { DESIGN_ID } from '../core/design.ts'
+import { DESIGNS_FOLDER, listDesigns } from '../core/design-store.ts'
+import { FileSceneStore, type SceneStore } from '../core/scene-store.ts'
 import { CACHE, availableLock } from './assets.ts'
 
 // Serves the built viewer, the scene files it asks for, and a stream of
@@ -33,6 +35,21 @@ const TYPES: Record<string, string> = {
   '.ktx2': 'image/ktx2',
   '.svg': 'image/svg+xml',
   '.pdf': 'application/pdf',
+  '.csv': 'text/csv; charset=utf-8',
+  '.zip': 'application/zip',
+  '.step': 'application/step',
+  '.stp': 'application/step',
+}
+
+// What the viewer itself shows from a design folder; every other file there
+// is for a person to keep, so it comes down as a download.
+const SHOWN = new Set(['.glb', '.gltf', '.bin', '.png', '.jpg', '.jpeg', '.webp'])
+
+// A download's name says which design it is from: office-desk-drawings.pdf,
+// not a fourth drawings.pdf in the Downloads folder.
+function attachment(id: string, file: string): string {
+  const name = `${id}-${basename(file)}`
+  return `attachment; filename="${name.replace(/[^\w.-]/g, '_')}"; filename*=UTF-8''${encodeURIComponent(name)}`
 }
 
 // The scene's folder as a path segment: a glTF's textures and buffers are
@@ -111,6 +128,8 @@ export async function startServer(port = DEFAULT_PORT, options: ServeOptions = {
       return undefined
     }
   }
+  // Furniture designs sit beside the projects of a store of named scenes.
+  const designs = store instanceof FileSceneStore ? join(store.root, DESIGNS_FOLDER) : undefined
   const channels = new Map<string, Channel>()
   let stamp = buildStamp()
   let rebuildTimer: NodeJS.Timeout | undefined
@@ -145,6 +164,20 @@ export async function startServer(port = DEFAULT_PORT, options: ServeOptions = {
 
   const broadcast = (path: string, event: string, data: unknown) => {
     for (const client of channel(path).clients) client.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+  }
+
+  // A design written or issued tells every open page, whatever its scene, so
+  // the gallery shows it without a reload. The pipeline writes a design as a
+  // burst of files; one event follows the burst.
+  let designsTimer: NodeJS.Timeout | undefined
+  let designsWatcher: FSWatcher | undefined
+  if (designs && existsSync(designs)) {
+    designsWatcher = watch(designs, { recursive: true }, () => {
+      clearTimeout(designsTimer)
+      designsTimer = setTimeout(() => {
+        for (const c of channels.values()) for (const client of c.clients) client.write('event: designs\ndata: {}\n\n')
+      }, 400)
+    })
   }
 
   const server = createServer(async (request, response) => {
@@ -191,6 +224,40 @@ export async function startServer(port = DEFAULT_PORT, options: ServeOptions = {
     if (url.pathname === '/api/scenes') {
       if (!store?.named) return send(response, 404, { error: 'this viewer shows one scene file; there is no list' })
       return send(response, 200, { scenes: await store.list() })
+    }
+
+    // Every design that reads as one; a server of one scene file has none.
+    if (url.pathname === '/api/designs') {
+      if (!designs) return send(response, 404, { error: 'this viewer shows one scene file; it has no designs' })
+      return send(response, 200, await listDesigns(dirname(designs)))
+    }
+
+    // /designs/<id>/<path>: a file inside one design's folder, and nothing
+    // outside it.
+    const designFile = /^\/designs\/([^/]+)\/(.+)$/.exec(url.pathname)
+    if (designFile && designs) {
+      const [, id, rest] = designFile
+      let relative: string
+      try {
+        relative = decodeURIComponent(rest)
+      } catch {
+        relative = ''
+      }
+      const folder = join(designs, id)
+      const file = normalize(join(folder, relative))
+      if (!DESIGN_ID.test(id) || !relative || relative.includes('\0') || !file.startsWith(folder + '/') || !existsSync(file) || statSync(file).isDirectory()) {
+        return send(response, 404, { error: 'no such file in that design' })
+      }
+      // A link inside the folder that points out of it is outside it too.
+      if (!realpathSync(file).startsWith(realpathSync(folder) + '/')) return send(response, 404, { error: 'no such file in that design' })
+      const type = extname(file).toLowerCase()
+      response.writeHead(200, {
+        'content-type': TYPES[type] ?? 'application/octet-stream',
+        'cache-control': 'no-store',
+        ...(SHOWN.has(type) ? {} : { 'content-disposition': attachment(id, file) }),
+      })
+      createReadStream(file).pipe(response)
+      return
     }
 
     if (url.pathname.startsWith('/api/')) {
@@ -279,6 +346,8 @@ export async function startServer(port = DEFAULT_PORT, options: ServeOptions = {
     port: actual,
     close: async () => {
       distWatcher.close()
+      designsWatcher?.close()
+      clearTimeout(designsTimer)
       for (const c of channels.values()) {
         c.watcher?.close()
         for (const client of c.clients) client.end()
