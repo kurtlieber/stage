@@ -126,6 +126,21 @@ test('the list is every scene by name, and skips hidden or odd folders', async (
   assert.deepEqual(await new FileSceneStore(join(root, 'missing')).list(), [])
 })
 
+test('designs/ beside the projects holds furniture, not scenes', async () => {
+  const root = await temp()
+  const store = new FileSceneStore(root)
+  await store.create('house/main', scene())
+  // A design folder that happens to hold a scene.json is still no scene.
+  await mkdir(join(root, 'designs', 'oak-shelf'), { recursive: true })
+  await writeFile(join(root, 'designs', 'oak-shelf', 'design.json'), '{}')
+  await writeFile(join(root, 'designs', 'oak-shelf', 'scene.json'), format(scene()))
+  assert.deepEqual(await store.list(), ['house/main'])
+  assert.deepEqual(await store.variants('designs'), [])
+  assert.throws(() => store.locate('designs/oak-shelf'), /holds designs, not scenes/)
+  await assert.rejects(store.create('designs/new', scene()), /holds designs, not scenes/)
+  await assert.rejects(store.read('designs/oak-shelf'), /holds designs, not scenes/)
+})
+
 test('an example is copied byte for byte, and a template is canonical', async () => {
   const root = await temp()
   const store = new FileSceneStore(root)

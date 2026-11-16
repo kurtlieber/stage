@@ -41,3 +41,24 @@ function feetInches(meters: number): string {
   const rest = inches % 12
   return feet === 0 ? `${rest}″` : `${feet}′ ${rest}″`
 }
+
+// A piece of furniture is drawn in millimeters, or in inches to the
+// sixteenth: 720 × 450 × 18 mm, or 28 3/8″ × 17 11/16″ × 11/16″. Past eight
+// feet it reads in feet too: 12′ 3 1/4″.
+export function formatMillimeters(sizes: number[], units: Units): string {
+  if (units === 'm') return `${sizes.map((s) => Math.round(s)).join(' × ')} mm`
+  return sizes.map((s) => fractionInches(s / 1000)).join(' × ')
+}
+
+function fractionInches(meters: number): string {
+  const sixteenths = Math.round(meters / INCH * 16)
+  let whole = Math.floor(sixteenths / 16)
+  let rest = sixteenths % 16
+  let below = 16
+  while (rest && rest % 2 === 0) [rest, below] = [rest / 2, below / 2]
+  const fraction = rest ? `${rest}/${below}` : ''
+  const feet = whole >= 96 ? Math.floor(whole / 12) : 0
+  whole -= feet * 12
+  const inches = whole && fraction ? `${whole} ${fraction}″` : `${whole || fraction || 0}″`
+  return feet ? `${feet}′ ${inches}` : inches
+}

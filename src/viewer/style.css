@@ -246,3 +246,101 @@ body.locked .bottom, body.locked .hint, body.locked .room-panel { display: none;
 
 body[data-mode='plan'] canvas#view { cursor: grab; touch-action: none; }
 body.panning canvas#view { cursor: grabbing; }
+
+/* Designs: the button beside the scene picker, the gallery on the right,
+   and a design alone on its studio floor with its panel. */
+.designs-button, .back { pointer-events: auto; border: 0; font: inherit; font-size: 0.93rem; color: var(--text); cursor: pointer; flex: none; }
+.designs-button:hover, .back:hover, .designs-button[aria-expanded='true'] { background: rgba(28, 28, 34, 0.9); }
+.designs-button[aria-expanded='true'] { box-shadow: inset 0 -2px 0 var(--accent); }
+.designs-button .where { color: var(--muted); }
+.designs-button .glyph { display: none; }
+.designs-button .glyph svg { display: block; }
+.back { font-weight: 600; }
+.back:focus-visible, .card:focus-visible, .gallery .close:focus-visible, .design-panel a:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+body.gallery-open .room-panel { display: none; }
+.gallery, .design-panel { position: absolute; top: 60px; right: 16px; max-height: calc(100vh - 76px); overflow-y: auto; padding: 12px 14px; overscroll-behavior: contain; }
+.gallery { width: 340px; }
+.gallery .head { display: flex; align-items: center; justify-content: space-between; }
+.gallery h2, .design-panel h2 { margin: 0; font-size: 1.14rem; line-height: 1.25; }
+.gallery h3, .design-panel h3 { margin: 14px 0 6px; font-size: 0.86rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.gallery .close { font: inherit; font-size: 1.3rem; line-height: 1; color: var(--muted); background: none; border: 0; border-radius: 6px; padding: 2px 8px; cursor: pointer; }
+.gallery .close:hover { color: var(--text); background: rgba(255, 255, 255, 0.1); }
+.units.scope { display: flex; margin-top: 10px; padding: 3px; gap: 2px; border-radius: 8px; background: rgba(255, 255, 255, 0.06); }
+.units.scope button { flex: 1; min-width: 0; padding: 4px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gallery .empty-note { color: var(--muted); margin: 12px 0 0; }
+.cards { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 8px; }
+.gallery h3 + .cards { margin-top: 0; }
+.card { display: grid; grid-template-columns: 96px 1fr; gap: 12px; align-items: center; width: 100%; padding: 6px; font: inherit; color: var(--text); text-align: left; background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.06); border-radius: 8px; cursor: pointer; }
+.card:hover { background: rgba(255, 255, 255, 0.1); border-color: rgba(255, 255, 255, 0.14); }
+.thumb { display: block; width: 96px; aspect-ratio: 4 / 3; border-radius: 5px; overflow: hidden; background: #d4d1cb; }
+.thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.thumb.empty { display: grid; place-items: center; background: rgba(255, 255, 255, 0.07); }
+.thumb.empty svg { width: 44px; fill: none; stroke: var(--muted); stroke-width: 1.4; opacity: 0.7; }
+.card .text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.card .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card .rooms, .card .dims { color: var(--muted); font-size: 0.86rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card .dims { font-variant-numeric: tabular-nums; }
+.meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.meta .rev { color: var(--muted); font-size: 0.86rem; }
+
+/* A status says how far a design has come: grey while a draft, the accent
+   while out for review, green once it can be built. Words, not only color. */
+.status { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 0.79rem; font-weight: 600; line-height: 1.5; white-space: nowrap; }
+.status.draft { color: var(--text); background: rgba(255, 255, 255, 0.14); }
+.status.issued-for-review { color: #1a1a1a; background: var(--accent); }
+.status.issued-for-build { color: #10200f; background: #8fd18b; }
+
+.design-panel { width: 340px; }
+.design-panel h2:focus { outline: none; }
+.design-panel h2:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.design-panel > .meta { margin-top: 6px; }
+.design-panel .summary { margin: 10px 0 0; color: var(--text); }
+.design-panel .facts { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; margin: 10px 0 0; }
+.design-panel dt { color: var(--muted); }
+.design-panel dd { margin: 0; font-variant-numeric: tabular-nums; }
+.design-panel ul { list-style: none; margin: 0; padding: 0; }
+.parts { display: grid; gap: 1px; }
+.parts button { display: grid; grid-template-columns: 1fr auto; column-gap: 8px; row-gap: 1px; width: 100%; padding: 6px 10px; font: inherit; color: var(--text); text-align: left; background: transparent; border: 0; border-radius: 6px; cursor: pointer; }
+.parts button:hover, .parts button.lit { background: rgba(232, 180, 58, 0.18); box-shadow: inset 3px 0 0 var(--accent); }
+.parts button[aria-pressed='true'] { background: rgba(232, 180, 58, 0.26); box-shadow: inset 3px 0 0 var(--accent); }
+.parts button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.parts .id { font: 0.8rem ui-monospace, monospace; color: var(--accent); }
+.parts .name { min-width: 0; overflow-wrap: anywhere; }
+.parts .qty { color: var(--muted); font-variant-numeric: tabular-nums; }
+.parts .dims { grid-column: 1 / 3; color: var(--muted); font-size: 0.86rem; font-variant-numeric: tabular-nums; }
+.placements { display: grid; gap: 6px; }
+.design-panel .link { font: inherit; color: var(--accent); background: none; border: 0; padding: 0; text-align: left; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.design-panel .revision { text-transform: none; letter-spacing: 0; font-size: 0.93rem; color: var(--text); }
+.design-panel .holds { color: var(--warning); font-size: 0.86rem; margin: -2px 0 4px; }
+.files { display: grid; gap: 2px; }
+.files a { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 4px 8px; margin: 0 -8px; border-radius: 6px; color: var(--text); text-decoration: none; }
+.files a:hover { background: rgba(255, 255, 255, 0.1); }
+.files a:hover { text-decoration: underline; text-underline-offset: 2px; }
+.files .type { flex: none; font: 600 0.72rem ui-monospace, monospace; letter-spacing: 0.04em; color: var(--muted); border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 4px; padding: 0 4px; }
+.design-panel .units { display: flex; gap: 2px; margin-top: 14px; padding: 3px; width: fit-content; border-radius: 8px; background: rgba(255, 255, 255, 0.06); }
+
+/* While a design is open the house steps aside. */
+body[data-mode='design'] #scenes, body[data-mode='design'] .designs-button, body[data-mode='design'] .modes, body[data-mode='design'] #camera,
+body[data-mode='design'] .sidebar, body[data-mode='design'] .room-panel, body[data-mode='design'] #selection { display: none !important; }
+body[data-mode='design'] .bottom { left: 16px; max-width: min(560px, calc(100vw - 404px)); }
+
+/* A phone: the gallery fills the width, a design's panel is a sheet
+   along the bottom with the piece above it. */
+@media (max-width: 600px) {
+  .designs-button .where, .designs-button .label { display: none; }
+  .designs-button { display: inline-flex; align-items: center; gap: 2px; }
+  .designs-button .glyph { display: block; }
+  /* Room for the modes beside the Designs button at 390 px. */
+  .designs-button { padding-left: 8px; padding-right: 8px; }
+  .modes button { padding: 4px 7px; }
+  .hint .hint-word { display: none; }
+  /* The scene picker names the scene, so the title gives up its room. */
+  body:not([data-mode='design']) .hud .top:has(#scenes:not(.hidden)) .title { display: none; }
+  .gallery { left: 16px; right: 16px; width: auto; }
+  .design-panel { top: auto; left: 0; right: 0; bottom: 0; width: auto; max-height: 46vh; border-radius: 14px 14px 0 0; padding: 14px 16px 18px; }
+  body[data-mode='design'] .bottom { display: none; }
+}
+
+/* Focus moves to a panel's heading for screen readers; it is not a control. */
+#design-title:focus, #gallery-title:focus { outline: none; }

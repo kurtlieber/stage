@@ -21,6 +21,7 @@ import { loadLibrary, loadSky, progress, settled, type Sky } from './library.ts'
 import { applyRoomMode, leaveRoomMode, type Walls } from './room-mode.ts'
 import { PlanSheet, type Drawing } from './plan-sheet.ts'
 import { renderRoomPanel } from './room-panel.ts'
+import { Designs } from './designs.ts'
 import { speckle } from './textures.ts'
 
 // The viewer. The same page serves a person in a browser and the command
@@ -240,6 +241,9 @@ let lastUpdate = 0
 let currentRoom: string | undefined
 // The person's own settings, kept in this browser between visits: how Room
 // mode opens the near walls, and the units every number is printed in.
+// The project's designs, on a server of named scenes; none in a share
+// bundle or a headless render.
+let designs: Designs | undefined
 let walls: Walls = setting('walls', ['low', 'glass'], 'low')
 let units: Units = setting('units', ['m', 'ft'], 'm')
 // Whether Plan mode shows the drawing under the floor plan.
@@ -661,6 +665,20 @@ function enterRoom(id: string | undefined) {
   select(undefined)
 }
 
+// Room mode on a room with one thing in it selected: where a design's See
+// in room goes. False if the scene lacks either.
+function showInRoom(room: string, object: string): boolean {
+  if (!scene?.rooms.some((r) => r.id === room) || !scene.objects.some((o) => o.id === object)) return false
+  // The room from above, so the piece is seen among its neighbours, with
+  // the piece selected and outlined a while. A close framing of the object
+  // alone often lands behind the furniture in front of it.
+  enterRoom(room)
+  selected = object
+  describe(object)
+  highlight([object], 4000)
+  return true
+}
+
 function setCurrentRoom(id: string | undefined) {
   if (id === currentRoom) return
   currentRoom = id
@@ -671,6 +689,7 @@ function setCurrentRoom(id: string | undefined) {
 // floor, and the room list.
 function showCurrentRoom() {
   renderRoomPanel($('room-panel'), scene, currentRoom, units, { goToRoom, walkTo, placeName, setUnits })
+  designs?.render()
   markRoom()
   for (const button of document.querySelectorAll<HTMLButtonElement>('#menu button[data-room]')) {
     if (button.dataset.room !== currentRoom) button.removeAttribute('aria-current')
@@ -885,7 +904,7 @@ function keyOrbit(delta: number) {
   perspective.position.copy(orbit.target).add(offset.setFromSpherical(spherical))
 }
 function zoomBy(factor: number) {
-  if (view === 'plan') return zoomPlan(1 / factor)
+  if (view === 'plan' && !designs?.viewing) return zoomPlan(1 / factor)
   if (!orbit.enabled || active !== perspective) return
   flight = undefined
   const offset = perspective.position.clone().sub(orbit.target)
@@ -1057,6 +1076,17 @@ window.addEventListener('keydown', (event) => {
   if (key === '+' || key === '=') return zoomBy(0.85)
   if (key === '-' || key === '_') return zoomBy(1 / 0.85)
   if (event.repeat) return
+  // Esc closes the nearest thing: the keys, the gallery, then a design.
+  if (event.key === 'Escape' && !$('help').classList.contains('hidden')) return showHelp(false)
+  if (event.key === 'Escape' && designs?.galleryOpen) return designs.toggleGallery(false)
+  if (event.key === 'Escape' && designs?.viewing) return designs.close()
+  // A design stands alone: the modes and rooms wait until Back.
+  if (designs?.viewing) {
+    if (key === 'u') setUnits(units === 'm' ? 'ft' : 'm')
+    else if (key === 'f') setQuality(quality === 'high' ? 'fast' : 'high', quality === 'high' ? 'Fast rendering: press F for high quality.' : 'High quality.')
+    else if (event.key === '?') showHelp($('help').classList.contains('hidden'))
+    return
+  }
   if (key === 'n' || key === 'b') goToRoom(scene && stepRoom(scene, currentRoom, key === 'n' ? 1 : -1))
   else if (key === 'c') cyclePlace(1)
   else if (key === 'p' || key === '1') setMode('plan')
@@ -1449,7 +1479,10 @@ async function load(first: boolean): Promise<void> {
     if (wanted !== undefined) cap = wanted >= levels.length - 1 ? Infinity : wanted
     const room = params.get('room')
     if (!restoreView()) {
-      if (room && next.rooms.some((r) => r.id === room)) enterRoom(room)
+      const object = params.get('select')
+      if (room && object && showInRoom(room, object)) {
+        // The room with one thing in it selected: where a design's See in room lands.
+      } else if (room && next.rooms.some((r) => r.id === room)) enterRoom(room)
       else useCamera(params.get('camera') ?? 'orbit')
     }
     landed = true
@@ -1477,16 +1510,27 @@ async function load(first: boolean): Promise<void> {
 // The view survives a reload (a new build, or F5), so iterating doesn't
 // throw the person back to the overview every time.
 const stateKey = `stage:view:${scenePath}`
+type SavedView = { view: View; label: string; position: number[]; target: number[]; fov: number; cap: number | null; planLevel?: number; yaw?: number; pitch?: number; foot?: number; place?: string; room?: string }
+function viewState(): SavedView {
+  return { view, label: $('camera').textContent ?? '', position: perspective.position.toArray(), target: orbit.target.toArray(), fov: perspective.fov, cap: cap === Infinity ? null : cap, planLevel, yaw, pitch, foot, place: currentPlace, room: currentRoom }
+}
 function saveView() {
-  if (headless || !scene) return
+  // A design's studio is no place to come back to: keep the view before it.
+  if (headless || !scene || designs?.viewing) return
   try {
-    sessionStorage.setItem(stateKey, JSON.stringify({ view, label: $('camera').textContent, position: perspective.position.toArray(), target: orbit.target.toArray(), fov: perspective.fov, cap: cap === Infinity ? null : cap, planLevel, yaw, pitch, foot, place: currentPlace, room: currentRoom }))
+    sessionStorage.setItem(stateKey, JSON.stringify(viewState()))
   } catch {}
 }
 function restoreView(): boolean {
   if (headless || params.has('camera') || params.has('room')) return false
   try {
-    const saved = JSON.parse(sessionStorage.getItem(stateKey) ?? 'null') as { view: View; label: string; position: number[]; target: number[]; fov: number; cap: number | null; planLevel?: number; yaw?: number; pitch?: number; foot?: number; place?: string; room?: string } | null
+    return applySaved(JSON.parse(sessionStorage.getItem(stateKey) ?? 'null') as SavedView | null)
+  } catch {
+    return false
+  }
+}
+function applySaved(saved: SavedView | null): boolean {
+  try {
     if (!saved) return false
     cap = saved.cap === null || saved.cap === undefined ? Infinity : saved.cap
     currentRoom = scene?.rooms.some((r) => r.id === saved.room) ? saved.room : undefined
@@ -1548,6 +1592,7 @@ function listen() {
   if (!scenePath) return
   const events = new EventSource(`./api/events?path=${encodeURIComponent(scenePath)}`)
   events.addEventListener('change', () => load(false).catch((error) => setStatus(escape(String(error.message ?? error)))))
+  events.addEventListener('designs', () => void designs?.refresh())
   events.addEventListener('control', (event) => {
     const message = JSON.parse((event as MessageEvent).data) as { camera?: string; focus?: string; level?: string }
     const wanted = levelIndexOf(message.level)
@@ -1571,6 +1616,7 @@ let stillSince = 0
 function frame() {
   const delta = Math.min(clock.getDelta(), 0.1)
   const now = performance.now()
+  if (designs?.viewing) return studioFrame(delta, now)
   if (flight) fly(now)
   else if (view === 'walk') {
     walkStep(delta)
@@ -1606,18 +1652,37 @@ function frame() {
   syncSheet(now)
   // Under the sheet, once it has faded in, there is nothing to draw.
   if (view === 'plan' && sheet?.covers(now)) return
-  if (quality === 'high' && active === perspective && still) {
-    renderPass.camera = perspective
-    ao.camera = perspective
+  draw(world, active, delta, still)
+}
+
+function draw(stage: THREE.Scene, camera: THREE.Camera, delta: number, still: boolean) {
+  if (quality === 'high' && camera === perspective && still) {
+    renderPass.scene = ao.scene = stage
+    renderPass.camera = ao.camera = perspective
     composer.render(delta)
   } else {
-    renderer.render(world, active)
+    renderer.render(stage, camera)
   }
   // Slow even without ambient occlusion: draw fewer pixels.
   if (!headless && quality === 'high' && !still) {
     slowFrames = delta > 0.05 ? slowFrames + 1 : Math.max(0, slowFrames - 2)
     if (slowFrames > 90) setQuality('fast', 'Switched to fast rendering because this machine draws slowly. Press F for high quality.')
   }
+}
+
+// A design on its studio floor: circling, and the picture, nothing else.
+function studioFrame(delta: number, now: number) {
+  keyOrbit(delta)
+  orbit.update()
+  designs!.frame()
+  shadowsChanged()
+  showProgress()
+  perspective.updateMatrixWorld()
+  if (!lastView.equals(perspective.matrixWorld)) {
+    lastView.copy(perspective.matrixWorld)
+    stillSince = now
+  }
+  draw(designs!.studio, perspective, delta, now - stillSince > 200)
 }
 
 // The built scene as one binary glTF, base64 in window.__stageGlb for
@@ -1700,6 +1765,53 @@ async function showScenePicker(): Promise<void> {
   picker.classList.remove('hidden')
 }
 
+// The design view borrows the canvas, the camera, and the orbit; the
+// viewer steps aside while it is open and comes back as it was.
+const DESIGN_HINT = 'Drag or arrow keys to circle · scroll or <kbd>+</kbd> <kbd>−</kbd> to zoom · point at a part to find it in the list · <kbd>Esc</kbd> back'
+let beforeDesign: SavedView | undefined
+function startDesigns() {
+  if (bundled || headless) return
+  designs = new Designs({
+    canvas,
+    renderer,
+    camera: perspective,
+    orbit,
+    scene: () => scene,
+    scenePath,
+    currentRoom: () => currentRoom,
+    units: () => units,
+    setUnits,
+    setStatus,
+    showInRoom,
+    enter() {
+      beforeDesign = viewState()
+      if (locked()) document.exitPointerLock()
+      rememberWalk()
+      keys.clear()
+      select(undefined)
+      applyView('orbit', $('camera').textContent ?? '')
+      flight = undefined
+      active = perspective
+      orbit.enabled = true
+      orbit.zoomToCursor = false
+      document.body.dataset.mode = 'design'
+      $('mode-hint').innerHTML = DESIGN_HINT
+    },
+    leave(restore) {
+      orbit.minDistance = 0
+      orbit.maxDistance = Infinity
+      const saved = beforeDesign
+      beforeDesign = undefined
+      if (restore && saved && applySaved(saved)) return
+      if (restore) showHouse()
+    },
+  })
+  void designs.refresh().then(() => {
+    const id = params.get('design')
+    if (id) void designs!.show(id, true)
+  })
+}
+
 async function start() {
   void showScenePicker()
   try {
@@ -1734,6 +1846,7 @@ async function start() {
       if (params.get('sheet')) renderSheet(params.get('sheet')!.split(',').filter(Boolean))
       document.body.dataset.ready = '1'
     } else {
+      startDesigns()
       listen()
       renderer.setAnimationLoop(frame)
     }
