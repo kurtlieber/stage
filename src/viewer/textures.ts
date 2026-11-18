@@ -157,6 +157,15 @@ export function boxInMeters(width: number, height: number, depth: number): THREE
   return geometry
 }
 
+// A flat sheet with UVs in meters, so a texture keeps its real size however
+// big the sheet is.
+export function planeInMeters(width: number, depth: number): THREE.PlaneGeometry {
+  const geometry = new THREE.PlaneGeometry(width, depth)
+  const uv = geometry.attributes.uv
+  for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * width, uv.getY(i) * depth)
+  return geometry
+}
+
 // A cylinder whose side UVs run in meters around and up it.
 export function cylinderInMeters(radiusTop: number, radiusBottom: number, height: number, segments = 24, open = false): THREE.CylinderGeometry {
   const geometry = new THREE.CylinderGeometry(radiusTop, radiusBottom, height, segments, 1, open)

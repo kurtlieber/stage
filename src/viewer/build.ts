@@ -8,7 +8,7 @@ import { railOffset, railSpacing, sliderLayout } from '../core/slider.ts'
 import { floorToFloor } from '../core/walk.ts'
 import { buildItem, textSprite } from './furniture.ts'
 import { fitModel, hasModel, loadModel, loadModelFrom, loadPlanImage, textureSet } from './library.ts'
-import { boxInMeters, planks, speckle, tiles } from './textures.ts'
+import { boxInMeters, cylinderInMeters, planeInMeters, planks, speckle, tiles } from './textures.ts'
 
 // Plan coordinates [x, y] (y north) become three.js [x, -z] with y up, so
 // north is -z. Everything the agent writes is in plan terms; this file is
@@ -414,7 +414,7 @@ function buildObjects(scene: Scene, root: THREE.Group, entities: Map<string, THR
     switch (object.kind) {
       case 'box': {
         const [w, d, h] = object.size
-        const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), surface)
+        const mesh = new THREE.Mesh(boxInMeters(w, h, d), surface)
         mesh.position.y = h / 2
         shaded(mesh)
         break
@@ -426,13 +426,13 @@ function buildObjects(scene: Scene, root: THREE.Group, entities: Map<string, THR
         break
       }
       case 'cylinder': {
-        const mesh = new THREE.Mesh(new THREE.CylinderGeometry(object.top ?? object.radius, object.radius, object.height, 48), surface)
+        const mesh = new THREE.Mesh(cylinderInMeters(object.top ?? object.radius, object.radius, object.height, 48), surface)
         mesh.position.y = object.height / 2
         shaded(mesh)
         break
       }
       case 'plane': {
-        const mesh = new THREE.Mesh(new THREE.PlaneGeometry(object.size[0], object.size[1]), surface)
+        const mesh = new THREE.Mesh(planeInMeters(object.size[0], object.size[1]), surface)
         mesh.rotation.x = -Math.PI / 2
         mesh.position.y = 0.002
         surface.side = THREE.DoubleSide

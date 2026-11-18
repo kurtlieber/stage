@@ -22,7 +22,7 @@ import { applyRoomMode, leaveRoomMode, type Walls } from './room-mode.ts'
 import { PlanSheet, type Drawing } from './plan-sheet.ts'
 import { renderRoomPanel } from './room-panel.ts'
 import { Designs } from './designs.ts'
-import { speckle } from './textures.ts'
+import { planeInMeters, speckle } from './textures.ts'
 
 // The viewer. The same page serves a person in a browser and the command
 // line's headless renders (?headless), so the agent and the person always
@@ -127,11 +127,7 @@ function sky(): THREE.Mesh {
 
 // A lawn with UVs in meters, so its texture reads at real size.
 function lawn(): THREE.Mesh {
-  const size = 300
-  const geometry = new THREE.PlaneGeometry(size, size)
-  const uv = geometry.attributes.uv
-  for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * size, uv.getY(i) * size)
-  const mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ map: speckle('#7c9160', 2, 0.1, 5), roughness: 1 }))
+  const mesh = new THREE.Mesh(planeInMeters(300, 300), new THREE.MeshStandardMaterial({ map: speckle('#7c9160', 2, 0.1, 5), roughness: 1 }))
   mesh.rotation.x = -Math.PI / 2
   mesh.position.y = -0.02
   mesh.receiveShadow = true
