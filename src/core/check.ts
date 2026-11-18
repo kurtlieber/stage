@@ -286,7 +286,7 @@ function spatial(scene: Scene): Problem[] {
     const ux = (edge.b[0] - edge.a[0]) / edge.length
     const uy = (edge.b[1] - edge.a[1]) / edge.length
     // Only the open panels of a slider need to stay clear.
-    const clear = opening.type === 'slider' ? sliderLayout(opening.width, opening.height).gap : { from: 0, to: opening.width }
+    const clear = opening.type === 'slider' ? sliderLayout(opening.width, opening.height, opening).gap : { from: 0, to: opening.width }
     const clearWidth = clear.to - clear.from
     const center: Point = [edge.a[0] + ux * (opening.at + (clear.from + clear.to) / 2), edge.a[1] + uy * (opening.at + (clear.from + clear.to) / 2)]
     const floor = roomElevation(scene, room)

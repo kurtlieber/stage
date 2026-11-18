@@ -4,7 +4,7 @@ import { FIXTURES, findAsset } from '../core/assets.ts'
 import { DEFAULT_MATERIALS, MATERIALS, materialSpec } from '../core/materials.ts'
 import { placeObjects } from '../core/objects.ts'
 import type { Scene } from '../core/schema.ts'
-import { RAIL_OFFSET, sliderLayout } from '../core/slider.ts'
+import { railOffset, railSpacing, sliderLayout } from '../core/slider.ts'
 import { floorToFloor } from '../core/walk.ts'
 import { buildItem, textSprite } from './furniture.ts'
 import { fitModel, hasModel, loadModel, loadModelFrom, loadPlanImage, textureSet } from './library.ts'
@@ -16,9 +16,24 @@ import { boxInMeters, planks, speckle, tiles } from './textures.ts'
 export const toWorld = ([x, y]: Point, height = 0) => new THREE.Vector3(x, height, -y)
 
 const GLASS = new THREE.MeshPhysicalMaterial({ color: '#cfe3ee', roughness: 0.05, metalness: 0, transparent: true, opacity: 0.28 })
+// A slider's open panels stack behind a closed one; fainter glass keeps
+// three or four layers from reading as frosted.
+const STACKED_GLASS = new THREE.MeshPhysicalMaterial({ color: '#cfe3ee', roughness: 0.05, metalness: 0, transparent: true, opacity: 0.1 })
 const FRAME = new THREE.MeshStandardMaterial({ color: '#f4f2ec', roughness: 0.5 })
 const DOOR = new THREE.MeshStandardMaterial({ color: '#b08a62', roughness: 0.6 })
 const TRIM = new THREE.MeshStandardMaterial({ color: '#f3f1ec', roughness: 0.45 })
+// A window's or slider's own `frame` color: powder-coated aluminium, one
+// material per color.
+const frames = new Map<string, THREE.MeshStandardMaterial>()
+function frameMaterial(color: string | undefined): THREE.MeshStandardMaterial | undefined {
+  if (!color) return undefined
+  let material = frames.get(color)
+  if (!material) {
+    material = new THREE.MeshStandardMaterial({ color, roughness: 0.4, metalness: 0.35 })
+    frames.set(color, material)
+  }
+  return material
+}
 const FIXTURE = new THREE.MeshStandardMaterial({ color: '#fffaf0', emissive: '#fff1d6', emissiveIntensity: 2.2, roughness: 0.4 })
 
 // A photographed texture set, when downloaded. Every surface carries UVs
@@ -686,13 +701,17 @@ function buildOpening(wall: Wall, hole: Wall['openings'][number]): THREE.Object3
   group.position.copy(toWorld(center, wall.elevation + hole.bottom))
   group.rotation.y = wallAngle(wall)
 
+  const custom = frameMaterial(opening.frame)
+  const frameMat = custom ?? FRAME
+  const trimMat = custom ?? TRIM
+
   if (opening.type === 'window') {
     const frame = 0.05
     const glass = new THREE.Mesh(new THREE.BoxGeometry(width - frame, height - frame, 0.01), GLASS)
     glass.position.y = height / 2
     group.add(glass)
     const bar = (w: number, h: number, x: number, y: number) => {
-      const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.06), FRAME)
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.06), frameMat)
       mesh.position.set(x, y, 0)
       mesh.castShadow = true
       group.add(mesh)
@@ -704,7 +723,7 @@ function buildOpening(wall: Wall, hole: Wall['openings'][number]): THREE.Object3
     // Mullions every meter or so, so a wide window reads as panes.
     const panes = Math.max(1, Math.round(width / 0.9))
     for (let i = 1; i < panes; i++) bar(0.03, height, -width / 2 + (i * width) / panes, height / 2)
-    const sill = new THREE.Mesh(new THREE.BoxGeometry(width + 0.08, 0.03, wall.thickness + 0.06), TRIM)
+    const sill = new THREE.Mesh(new THREE.BoxGeometry(width + 0.08, 0.03, wall.thickness + 0.06), trimMat)
     sill.position.y = -0.015
     sill.receiveShadow = true
     group.add(sill)
@@ -741,33 +760,35 @@ function buildOpening(wall: Wall, hole: Wall['openings'][number]): THREE.Object3
   }
 
   if (opening.type === 'slider') {
-    // Glass panels on two rails, the middle ones slid open; a fixed transom
-    // above tall ones, with its mullions on the panel lines.
-    const { panels, panelTop } = sliderLayout(width, height)
+    // Glass panels on their rails, the open ones slid over a closed one; a
+    // fixed transom above tall ones, with its mullions on the panel lines.
+    const { panels, rails, panelTop } = sliderLayout(width, height, opening)
     const frame = 0.045
     const depth = wall.thickness + 0.03
-    const bar = (w: number, h: number, d: number, x: number, y: number, z: number, material = FRAME) => {
+    // A panel's frame is 4 cm deep, thinner when rails sit closer than that.
+    const panelDepth = Math.min(0.04, railSpacing(rails, wall.thickness) - 0.005)
+    const bar = (w: number, h: number, d: number, x: number, y: number, z: number, material = frameMat) => {
       const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material)
       mesh.position.set(x, y, z)
       mesh.castShadow = true
       group.add(mesh)
     }
     // Threshold track, head, and jambs.
-    bar(width, 0.02, depth, 0, 0.01, 0, TRIM)
-    bar(width + 0.12, 0.06, depth, 0, panelTop + 0.03, 0, TRIM)
-    bar(0.06, height + 0.06, depth, -width / 2 - 0.03, (height + 0.06) / 2, 0, TRIM)
-    bar(0.06, height + 0.06, depth, width / 2 + 0.03, (height + 0.06) / 2, 0, TRIM)
+    bar(width, 0.02, depth, 0, 0.01, 0, trimMat)
+    bar(width + 0.12, 0.06, depth, 0, panelTop + 0.03, 0, trimMat)
+    bar(0.06, height + 0.06, depth, -width / 2 - 0.03, (height + 0.06) / 2, 0, trimMat)
+    bar(0.06, height + 0.06, depth, width / 2 + 0.03, (height + 0.06) / 2, 0, trimMat)
     for (const panel of panels) {
       const w = panel.to - panel.from
       const x = -width / 2 + panel.at + w / 2
-      const z = (panel.rail === 0 ? -1 : 1) * RAIL_OFFSET
-      const glass = new THREE.Mesh(new THREE.BoxGeometry(w - frame, panelTop - 0.02 - frame, 0.01), GLASS)
+      const z = -railOffset(panel.rail, rails, wall.thickness)
+      const glass = new THREE.Mesh(new THREE.BoxGeometry(w - frame, panelTop - 0.02 - frame, 0.01), panel.open ? STACKED_GLASS : GLASS)
       glass.position.set(x, 0.02 + (panelTop - 0.02) / 2, z)
       group.add(glass)
-      bar(w, frame, 0.04, x, 0.02 + frame / 2, z)
-      bar(w, frame, 0.04, x, panelTop - frame / 2, z)
-      bar(frame, panelTop - 0.02, 0.04, x - w / 2 + frame / 2, 0.02 + (panelTop - 0.02) / 2, z)
-      bar(frame, panelTop - 0.02, 0.04, x + w / 2 - frame / 2, 0.02 + (panelTop - 0.02) / 2, z)
+      bar(w, frame, panelDepth, x, 0.02 + frame / 2, z)
+      bar(w, frame, panelDepth, x, panelTop - frame / 2, z)
+      bar(frame, panelTop - 0.02, panelDepth, x - w / 2 + frame / 2, 0.02 + (panelTop - 0.02) / 2, z)
+      bar(frame, panelTop - 0.02, panelDepth, x + w / 2 - frame / 2, 0.02 + (panelTop - 0.02) / 2, z)
     }
     const transom = height - panelTop - 0.06
     if (transom > 0.1) {

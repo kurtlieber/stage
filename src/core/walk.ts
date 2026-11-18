@@ -3,7 +3,7 @@ import { alongWall, levelAbove, pointInPolygon, roomElevation, wallPieces, walls
 import { footprintCorners, placeObjects } from './objects.ts'
 import type { Scene } from './schema.ts'
 import { stair, type Stair } from './stairs.ts'
-import { RAIL_OFFSET, sliderLayout } from './slider.ts'
+import { railOffset, sliderLayout } from './slider.ts'
 
 // Walking through a scene: what stops a person, how they slide off it, and
 // what they stand on, floor by floor and up the stairs. Pure plan geometry,
@@ -34,10 +34,12 @@ export function obstacles(scene: Scene): Obstacles {
     // The closed panels of a sliding door stop a person; the gap does not.
     for (const hole of wall.openings) {
       if (hole.opening.type !== 'slider') continue
-      const { gap } = sliderLayout(hole.to - hole.from, hole.top - hole.bottom)
+      const { gap, rails } = sliderLayout(hole.to - hole.from, hole.top - hole.bottom, hole.opening)
+      // The closed panels stand on rails across the wall's depth.
+      const half = railOffset(0, rails, wall.thickness) + 0.02
       for (const [from, to] of [[hole.from, hole.from + gap.from], [hole.from + gap.to, hole.to]]) {
         if (to - from < 1e-3) continue
-        result.walls.push({ a: alongWall(wall, from), b: alongWall(wall, to), half: RAIL_OFFSET + 0.02, bottom: wall.elevation + hole.bottom, top: wall.elevation + hole.top })
+        result.walls.push({ a: alongWall(wall, from), b: alongWall(wall, to), half, bottom: wall.elevation + hole.bottom, top: wall.elevation + hole.top })
       }
     }
   }

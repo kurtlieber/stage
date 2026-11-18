@@ -55,6 +55,10 @@ stands in rooms, levels stack. A scene with no rooms is fine.
   edge from `floor[n]`. `type` is door, window, opening (a stretch of
   missing wall), or slider (a sliding glass door from the floor up, its
   middle panels standing open). Windows take a `sill` height (default 0.9).
+  A slider with `tracks` (2 to 8) is a multi-track stacking door: one panel
+  per track, all slid over the fixed panel at its `stack` end (`start`, the
+  default, or `end`). Windows and sliders take a `frame` color like
+  "#1c1c1c" (default off-white).
 - `items`: an `asset` from the library (`assets` tool), placed by its center
   `at` [x, y] in a `room`, rotated by `facing` (0 = its front faces north,
   90 = east, 180 = south). An unknown asset with a `size` [w, d, h] renders

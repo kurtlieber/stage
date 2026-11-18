@@ -13,6 +13,7 @@ import { Scene } from '../src/core/schema.ts'
 import { formatArea, formatLength, formatLevel, formatSize } from '../src/core/units.ts'
 import { materialSpec } from '../src/core/materials.ts'
 import { format, readScene, writeScene } from '../src/core/store.ts'
+import { railOffset, sliderLayout } from '../src/core/slider.ts'
 import { BODY_RADIUS, floorToFloor, ground, obstacles, resolve } from '../src/core/walk.ts'
 
 const example = async () => (await readScene(new URL('../examples/flat/scene.json', import.meta.url).pathname)) as any
@@ -360,6 +361,42 @@ test('a sliding door lets a person through its open panels, not its closed ones'
   assert.ok(walk([3, 1], [0, -1], 100, blocking).at(-1)![1] < -0.5, 'through the open middle panel')
   assert.ok(walk([1.6, 1], [0, -1], 100, blocking).at(-1)![1] > 0, 'stopped by the closed panel')
   assert.ok(walk([0.5, 1], [0, -1], 100, blocking).at(-1)![1] > 0, 'stopped by the wall beside it')
+})
+
+test('a multi-track slider stacks every moving panel over the fixed one at its stack end', async () => {
+  const start = sliderLayout(6, 2.4, { tracks: 4 })
+  assert.equal(start.rails, 4)
+  assert.deepEqual(start.panels.map((p) => p.rail), [0, 1, 2, 3])
+  assert.deepEqual(start.panels.map((p) => p.open), [false, true, true, true])
+  assert.ok(start.panels.every((p) => p.at === 0), 'all drawn over the first panel')
+  assert.deepEqual(start.gap, { from: 1.5, to: 6 })
+  const end = sliderLayout(6, 2.4, { tracks: 4, stack: 'end' })
+  assert.deepEqual(end.gap, { from: 0, to: 4.5 })
+  assert.ok(end.panels.every((p) => p.at === 4.5))
+  assert.deepEqual(sliderLayout(6, 2.4), sliderLayout(6, 2.4, {}), 'no tracks: the two-rail slider as before')
+  // Rails spread across a thick wall and squeeze into a thin one, centered.
+  assert.equal(railOffset(0, 2, 0.1), 0.03)
+  assert.ok(Math.abs(railOffset(0, 4, 0.23) - 0.09) < 1e-9)
+  assert.ok(railOffset(0, 4, 0.115) + 0.02 <= 0.115 / 2 + 1e-9 && Math.abs(railOffset(0, 4, 0.115) + railOffset(3, 4, 0.115)) < 1e-9)
+
+  const raw = {
+    stage: '0.1',
+    name: 'stacking',
+    units: 'm',
+    levels: [{ id: 'ground', elevation: 0, height: 2.7 }],
+    rooms: [{ id: 'room', level: 'ground', name: 'Room', floor: [[0, 0], [8, 0], [8, 4], [0, 4]] }],
+    // Four 1.5 m panels from x 1 to 7, stacked at the start: x 2.5 to 7 is open.
+    openings: [{ id: 'glass', wall: { room: 'room', edge: 0 }, at: 1, type: 'slider', width: 6, height: 2.4, tracks: 4, frame: '#1c1c1c' }],
+    items: [{ id: 'chair', asset: 'chair/armchair', room: 'room', at: [1.7, 0.6], facing: 180 }],
+  }
+  const result = check(raw)
+  assert.ok(result.scene, result.problems.map((p) => p.message).join('\n'))
+  assert.doesNotMatch(result.problems.map((p) => p.message).join('\n'), /"chair".*"glass"/s, 'a chair in front of the fixed panel is out of the way')
+  const blocking = obstacles({ ...result.scene!, items: [] })
+  assert.ok(walk([5, 1], [0, -1], 100, blocking).at(-1)![1] < -0.5, 'through the open width')
+  assert.ok(walk([1.7, 1], [0, -1], 100, blocking).at(-1)![1] > 0, 'stopped by the fixed panel')
+  assert.match(format(result.scene!), /"tracks": 4,\s*"frame": "#1c1c1c"/)
+  assert.ok(check({ ...raw, openings: [{ ...raw.openings[0], frame: 'black' }] }).problems.some((p) => /color like/.test(p.message)), 'a frame is a hex color')
 })
 
 // Space: what query knows about free floor, and what check says about
