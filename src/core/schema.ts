@@ -88,6 +88,12 @@ export const Opening = z.object({
   height: z.number().positive(),
   sill: z.number().min(0).optional(),
   swing: z.enum(['in-left', 'in-right', 'out-left', 'out-right']).optional(),
+  // A slider with `tracks` is a multi-track stacking door: one panel per
+  // track, all slid over the fixed panel at the `stack` end (default start).
+  tracks: z.number().int().min(2).max(8).optional(),
+  stack: z.enum(['start', 'end']).optional(),
+  // The color of a window's or slider's frame (default off-white).
+  frame: z.string().regex(/^#[0-9a-fA-F]{6}$/, 'a color like #a0b0c0').optional(),
 })
 
 export const Item = z.object({
@@ -235,7 +241,7 @@ export const KEY_ORDER: Record<string, string[]> = {
   level: ['id', 'name', 'elevation', 'height', 'slab', 'grade', 'plan', 'roof'],
   plan: ['image', 'scale', 'origin', 'opacity'],
   room: ['id', 'level', 'name', 'zone', 'floor', 'height', 'open', 'parapet', 'well', 'ceiling', 'thickness', 'materials'],
-  opening: ['id', 'wall', 'at', 'type', 'width', 'height', 'sill', 'swing'],
+  opening: ['id', 'wall', 'at', 'type', 'width', 'height', 'sill', 'swing', 'tracks', 'stack', 'frame'],
   item: ['id', 'asset', 'room', 'at', 'facing', 'elevation', 'size', 'scale'],
   object: ['id', 'kind', 'name', 'label', 'parent', 'room', 'at', 'facing', 'pitch', 'roll', 'scale', 'size', 'radius', 'top', 'height', 'polygon', 'file', 'source', 'license', 'credit', 'asset', 'material', 'color', 'roughness', 'metalness', 'opacity', 'glow', 'solid'],
   light: ['id', 'type', 'azimuth', 'elevation', 'intensity', 'color', 'at'],

@@ -2,7 +2,7 @@ import { findAsset } from './assets.ts'
 import { alongWall, area, bounds, centroid, distanceToSegment, edges, pointInPolygon, roomElevation, walls, type Point, type Wall } from './geometry.ts'
 import { footprintCorners, placeObjects } from './objects.ts'
 import type { Room, Scene } from './schema.ts'
-import { RAIL_OFFSET, sliderLayout } from './slider.ts'
+import { railOffset, railSpacing, sliderLayout } from './slider.ts'
 import { stair } from './stairs.ts'
 import { floorToFloor } from './walk.ts'
 
@@ -160,12 +160,13 @@ function opening(plan: FloorPlan, wall: Wall, hole: Wall['openings'][number], ha
   }
   if (opening.type === 'slider') {
     plan.lines.push({ points: band(wall, hole.from, hole.to, -half, half), kind: 'frame', closed: true })
-    // Rail 0 on the left of the wall, rail 1 on the right, as built.
-    const { panels } = sliderLayout(width, hole.top - hole.bottom)
+    // Rail 0 on the left of the wall, the rest stepping right, as built.
+    const { panels, rails } = sliderLayout(width, hole.top - hole.bottom, opening)
+    const thick = Math.min(0.02, railSpacing(rails, 2 * half) * 0.4)
     for (const panel of panels) {
-      const offset = panel.rail === 0 ? RAIL_OFFSET : -RAIL_OFFSET
+      const offset = railOffset(panel.rail, rails, 2 * half)
       const from = hole.from + panel.at
-      plan.lines.push({ points: band(wall, from, from + (panel.to - panel.from), offset - 0.02, offset + 0.02), kind: 'panel', closed: true })
+      plan.lines.push({ points: band(wall, from, from + (panel.to - panel.from), offset - thick, offset + thick), kind: 'panel', closed: true })
     }
     return
   }
