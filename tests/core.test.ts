@@ -6,7 +6,7 @@ import { test } from 'node:test'
 import { measureGltf } from '../src/cli/assets.ts'
 import { searchAssets } from '../src/core/assets.ts'
 import { check } from '../src/core/check.ts'
-import { distanceToSegment, slabAbove, storeys, walls, wallPieces } from '../src/core/geometry.ts'
+import { distanceToSegment, houseBounds, sceneBounds, slabAbove, storeys, walls, wallPieces } from '../src/core/geometry.ts'
 import { query } from '../src/core/query.ts'
 import { roomFacts, stepRoom } from '../src/core/room-facts.ts'
 import { Scene } from '../src/core/schema.ts'
@@ -474,6 +474,16 @@ test('a scene needs neither levels nor rooms', () => {
   assert.equal(result.scene!.levels[0].id, 'ground')
   assert.equal(result.scene!.levels[0].height, 2.7)
   assert.deepEqual(query(result.scene!, ['bounds']), { min: [-0.5, -0.5], max: [0.5, 0.5], width: 1, depth: 1 })
+})
+
+test('the viewer frames the rooms, not a site plane hundreds of meters wide', () => {
+  const room = { id: 'den', floor: [[0, 0], [4, 0], [4, 3], [0, 3]] }
+  const scene = check(objectScene([{ id: 'terrain', kind: 'plane', size: [300, 600] }], { rooms: [room] })).scene!
+  assert.deepEqual(houseBounds(scene), { min: [0, 0], max: [4, 3] })
+  assert.ok(sceneBounds(scene).max[1] >= 300)
+  // Without rooms there is nothing else to frame.
+  const bare = check(objectScene([{ id: 'crate', kind: 'box', size: [1, 1, 1] }])).scene!
+  assert.deepEqual(houseBounds(bare), sceneBounds(bare))
 })
 
 test('facing turns an object clockwise from north, in the world and in a parent', () => {

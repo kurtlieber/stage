@@ -9,7 +9,7 @@ import { findAsset } from '../core/assets.ts'
 import { check, type Problem } from '../core/check.ts'
 import { findCamera } from '../core/cameras.ts'
 import { floorPlan } from '../core/floor-plan.ts'
-import { bounds, centroid, levelsByElevation, pointInPolygon, roomElevation, roomHeight, sceneBounds, storeys, type Point } from '../core/geometry.ts'
+import { bounds, centroid, houseBounds, levelsByElevation, pointInPolygon, roomElevation, roomHeight, sceneBounds, storeys, type Point } from '../core/geometry.ts'
 import { STEP, ground, obstacles, resolve as resolveWalk, type Obstacles } from '../core/walk.ts'
 import { SKY } from '../core/materials.ts'
 import { roomFacts, roomName, roomUnder, stepRoom } from '../core/room-facts.ts'
@@ -288,7 +288,7 @@ let viewHeight = 1
 
 function fitPlan() {
   if (!scene) return
-  const b = sceneBounds(scene)
+  const b = houseBounds(scene)
   // The top of the plan's storey, split levels and all.
   const level = levels[Math.min(reach(planLevel), levels.length - 1)]
   const margin = 1
@@ -340,7 +340,7 @@ function fittedPlan(cx: number, cy: number, halfW: number, b: { min: number[]; m
 const planScale = () => (viewWidth * plan.zoom) / (plan.right - plan.left)
 function movePlan(x: number, y: number, zoom: number) {
   if (!scene) return
-  const b = sceneBounds(scene)
+  const b = houseBounds(scene)
   const fitted = viewWidth / (plan.right - plan.left)
   planPan = {
     x: THREE.MathUtils.clamp(x, b.min[0], b.max[0]),
@@ -492,7 +492,7 @@ interface Pose {
 // or from the side given, at the same height.
 function overviewPose(side?: THREE.Vector3): Pose | undefined {
   if (!scene) return undefined
-  const b = sceneBounds(scene)
+  const b = houseBounds(scene)
   const cx = (b.min[0] + b.max[0]) / 2
   const cy = (b.min[1] + b.max[1]) / 2
   const top = levels[Math.min(levels.length - 1, cap)] ?? levels.at(-1)
@@ -809,8 +809,8 @@ function setUnits(next: Units) {
 // also holds the switch for its walls.
 const HINTS: Record<Mode, string> = {
   plan: 'Click a room to pick it, double-click to open it · drag or arrow keys to pan · scroll or <kbd>+</kbd> <kbd>−</kbd> to zoom, <kbd>P</kbd> to fit · <kbd>[</kbd> <kbd>]</kbd> level down or up',
-  house: 'Drag or arrow keys to circle · scroll or <kbd>+</kbd> <kbd>−</kbd> to zoom · click a room to pick it, double-click to open it',
-  room: 'Drag or arrow keys to circle · scroll or <kbd>+</kbd> <kbd>−</kbd> to zoom · <kbd>N</kbd> <kbd>B</kbd> next or previous room',
+  house: 'Drag or arrow keys to circle · right-drag or <kbd>Shift</kbd>-drag to move · scroll or <kbd>+</kbd> <kbd>−</kbd> to zoom · click a room to pick it, double-click to open it',
+  room: 'Drag or arrow keys to circle · right-drag or <kbd>Shift</kbd>-drag to move · scroll or <kbd>+</kbd> <kbd>−</kbd> to zoom · <kbd>N</kbd> <kbd>B</kbd> next or previous room',
   walk: '<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · drag or <kbd>←</kbd> <kbd>→</kbd> to turn · double-click to lock the mouse · <kbd>N</kbd> <kbd>B</kbd> next or previous room',
 }
 function showModeHint() {
@@ -1451,7 +1451,7 @@ async function load(first: boolean): Promise<void> {
   blocking = obstacles(next)
   alignSky()
   if (built.sun) {
-    const b = sceneBounds(next)
+    const b = houseBounds(next)
     const size = Math.max(b.max[0] - b.min[0], b.max[1] - b.min[1]) / 2 + 3
     const cx = (b.min[0] + b.max[0]) / 2
     const cy = (b.min[1] + b.max[1]) / 2
