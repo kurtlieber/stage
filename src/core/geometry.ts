@@ -107,6 +107,13 @@ export function sceneBounds(scene: Scene): Bounds {
   return points.length ? bounds(points) : { min: [-2, -2], max: [2, 2] }
 }
 
+// What the viewer frames: the rooms, so terrain or a site plane hundreds
+// of meters wide doesn't push the camera into the sky. A scene without
+// rooms frames everything.
+export function houseBounds(scene: Scene): Bounds {
+  return scene.rooms.length ? bounds(scene.rooms.flatMap((room) => room.floor)) : sceneBounds(scene)
+}
+
 // Ray casting, with points on an edge counted as inside, so an item pushed
 // flush against a wall is still in its room.
 export function pointInPolygon([x, y]: Point, polygon: Point[]): boolean {
